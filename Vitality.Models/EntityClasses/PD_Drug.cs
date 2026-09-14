@@ -1,0 +1,65 @@
+using System;
+using System.Collections.Generic;
+
+namespace Vitality.Models.EntityClasses
+{
+    public partial class PD_Drug
+    {
+        public PD_Drug()
+        {
+            PC_CLINICTOPATIENTs = new HashSet<PC_CLINICTOPATIENT>();
+            PC_PHARMTOGLOBALs = new HashSet<PC_PHARMTOGLOBAL>();
+        }
+
+        public long DrugId { get; set; }
+        public long? PharmacyId { get; set; }
+        public long ProductId { get; set; }
+        public long CatalogId { get; set; }
+        public long? CategoryId { get; set; }
+        public string? Type { get; set; }
+        public string? Name { get; set; }
+        public string? BrandName { get; set; }
+        public string? ShortName { get; set; }
+        public string? LablerName { get; set; }
+        public string? GenericName { get; set; }
+        public decimal? Price { get; set; }
+        public decimal? ComparePrice { get; set; }
+        public int? Quantity { get; set; }
+        public string? QuantityUnit { get; set; }
+        public int? Refills { get; set; }
+        public string? Dose { get; set; }
+        public string? Dosage { get; set; }
+        public string? DosageForm { get; set; }
+        public string? Strenght { get; set; }
+        public string? Sig { get; set; }
+        public string? ShippingFrequency { get; set; }
+        public string? BillingFrequency { get; set; }
+        public string? Packing { get; set; }
+        public string? Form { get; set; }
+        public string? UPC { get; set; }
+        public string? PackageNDC { get; set; }
+        public int? DosageOrdering { get; set; }
+        public string? Instruction { get; set; }
+        public string? RegularImageURL { get; set; }
+        public string? TransparentBackgroundImageURL { get; set; }
+        public string? VideoURL { get; set; }
+        public string? Status { get; set; }
+        public bool? IsActive { get; set; }
+        public long? CreatedBy { get; set; }
+        public DateTime? CreatedDate { get; set; }
+        public long? ModifiedBy { get; set; }
+        public DateTime? ModifiedDate { get; set; }
+        public string? PackageSize { get; set; }
+        public decimal? Markup { get; set; }
+        public bool? Control_Substance { get; set; }
+        public bool? ControlSubstance { get; set; }
+        public decimal? SuggestedRetail { get; set; }
+        public string? ItemDesignatorID { get; set; }
+        public bool? Refrigerated { get; set; }
+        public bool? IsCustom { get; set; }
+
+        public virtual PD_Catalog? Catalog { get; set; }
+        public virtual ICollection<PC_CLINICTOPATIENT> PC_CLINICTOPATIENTs { get; set; }
+        public virtual ICollection<PC_PHARMTOGLOBAL> PC_PHARMTOGLOBALs { get; set; }
+    }
+}

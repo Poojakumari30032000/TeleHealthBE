@@ -1,0 +1,60 @@
+<Project>
+
+  <!--
+    ============================================================================
+     Central build configuration for the TeleHealth backend.
+
+     MSBuild imports this file automatically into EVERY project underneath this
+     directory (Vitality, Vitality.Models, Vitality.Models.Tests), so a version
+     bump happens here once instead of in three .csproj files.
+
+     Why this matters: Vitality and Vitality.Models must carry the SAME
+     Entity Framework Core major version. If they drift apart, `dotnet restore`
+     fails outright (NU1605), so keeping the version in one place removes a
+     whole class of build break.
+    ============================================================================
+  -->
+
+  <PropertyGroup Label="Shared build settings">
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <!--
+    NOTE: the user-secrets id is NOT defined here.
+
+    It is a literal in two places, because both consumers evaluate it
+    independently and neither should depend on an MSBuild property:
+
+      Vitality/Vitality.csproj                     <UserSecretsId>
+        - read by the `dotnet user-secrets` CLI
+
+      Vitality.Models/Configuration/
+        DevelopmentUserSecrets.cs                  const UserSecretsId
+        - read at runtime by MainContext.OnConfiguring and
+          BaseRepo.GetConnectionString(), which build their own
+          IConfiguration because ~21 repositories construct
+          `new MainContext()` instead of taking the DI-registered context
+
+    The two must match. See SECRETS.md.
+  -->
+
+
+  <PropertyGroup Label="Package versions">
+    <!--
+      Entity Framework Core. Must stay on the same major version as the target
+      framework: EF Core 8.x requires net8.0 and will not restore on net6.0.
+    -->
+    <MicrosoftEntityFrameworkCoreVersion>8.0.10</MicrosoftEntityFrameworkCoreVersion>
+
+    <!--
+      ASP.NET Core packages that ship OUTSIDE the Microsoft.AspNetCore.App
+      shared framework and therefore still need an explicit PackageReference.
+      Currently that is only Microsoft.AspNetCore.Authentication.JwtBearer.
+    -->
+    <MicrosoftAspNetCoreVersion>8.0.10</MicrosoftAspNetCoreVersion>
+
+    <!-- Microsoft.Extensions.* packages. -->
+    <MicrosoftExtensionsVersion>8.0.1</MicrosoftExtensionsVersion>
+  </PropertyGroup>
+
+</Project>

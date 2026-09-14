@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Upgraded net6.0 -> net8.0. Required: a net6.0 project cannot reference a
+      net8.0 project, and Vitality.Models is now net8.0.
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup Label="Shared framework">
+    <!--
+      Vitality.Models carries a FrameworkReference to Microsoft.AspNetCore.App.
+      That does flow transitively through ProjectReference, but declaring it
+      here removes the dependence on that behaviour and makes the test host's
+      runtime requirement explicit. The tests themselves touch no ASP.NET type.
+    -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Vitality.Models\Vitality.Models.csproj" />
+  </ItemGroup>
+
+</Project>
