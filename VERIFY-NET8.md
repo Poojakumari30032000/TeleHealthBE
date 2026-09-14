@@ -87,6 +87,9 @@ restore — these are what actually restored, not what the `.csproj` files ask f
 | `MicrosoftEntityFrameworkCoreVersion` | 8.0.10 | `Microsoft.EntityFrameworkCore`, `.SqlServer`, `.Design`, `.Tools`, `.Relational` all 8.0.10 |
 | `MicrosoftAspNetCoreVersion` | 8.0.10 | `Microsoft.AspNetCore.Authentication.JwtBearer` 8.0.10 |
 | `MicrosoftExtensionsVersion` | 8.0.1 | `Microsoft.Extensions.Http`, `.Configuration.UserSecrets` both 8.0.1 |
+| `AwsSdkS3Version` | 3.7.401 | `AWSSDK.S3` 3.7.401 — added by TEL-48 |
+| `TwilioVersion` | 6.8.0 | `Twilio` 6.8.0 — added by TEL-48 |
+| `BCryptNetNextVersion` | 4.0.3 | `BCrypt.Net-Next` 4.0.3 — added by TEL-48 |
 
 All three properties restore exactly as pinned. No amendment required.
 
@@ -95,9 +98,9 @@ All three properties restore exactly as pinned. No amendment required.
 | Package | Requested | Resolved |
 |---|---|---|
 | AutoMapper | 13.0.1 | 13.0.1 |
-| AWSSDK.S3 | 3.7.400.38 | **3.7.401** ⚠ |
-| BCrypt.Net-Next | 0.1.0 | **2.0.0** ⚠ |
-| Twilio | 6.7.3 | **6.8.0** ⚠ |
+| AWSSDK.S3 | 3.7.401 | 3.7.401 |
+| BCrypt.Net-Next | 4.0.3 | 4.0.3 |
+| Twilio | 6.8.0 | 6.8.0 |
 | AngleSharp | 1.1.2 | 1.1.2 |
 | ClosedXML | 0.102.3 | 0.102.3 |
 | CsvHelper | 33.1.0 | 33.1.0 |
@@ -121,7 +124,10 @@ All three properties restore exactly as pinned. No amendment required.
 Both are recorded rather than fixed: TEL-9 confines version edits to the three
 `Directory.Build.props` properties, and neither finding touches those.
 
-### 1. Three pinned versions do not exist on nuget.org (`NU1603`, 18 warnings)
+### 1. Three pinned versions do not exist on nuget.org (`NU1603`, 18 warnings) — RESOLVED by TEL-48
+
+> **Resolved.** See "TEL-48 — NU1603 resolution" below. Kept here as the original
+> finding; the section below records what was done about it.
 
 `AWSSDK.S3 3.7.400.38`, `BCrypt.Net-Next 0.1.0` and `Twilio 6.7.3` are not
 published versions. A `PackageReference` is a minimum-version constraint, so NuGet
@@ -143,6 +149,78 @@ first, and re-run this verification.
 ticket lists `NU1902` (moderate) as acceptable but does not mention `NU1903`.
 Flagged for triage; a major-version move is well outside a build-verification
 ticket.
+
+## TEL-48 — NU1603 resolution
+
+Finding 1 above is closed. All three versions now exist on nuget.org and are
+declared once in `Directory.Build.props` rather than repeated across `.csproj`
+files (`AWSSDK.S3` and `Twilio` were each declared in two).
+
+| Package | Was pinned | Silently restored | Now pinned |
+|---|---|---|---|
+| `AWSSDK.S3` | 3.7.400.38 (does not exist) | 3.7.401 | **3.7.401** |
+| `Twilio` | 6.7.3 (does not exist) | 6.8.0 | **6.8.0** |
+| `BCrypt.Net-Next` | 0.1.0 (does not exist) | 2.0.0 | **4.0.3** |
+
+`AWSSDK.S3` and `Twilio` are pinned to exactly what they were already restoring,
+so nothing about the built artifact changes — only the repository's honesty about
+it. Neither moves major version.
+
+### Why `BCrypt.Net-Next` 4.0.3
+
+4.0.3 is the newest release that still ships a .NET-specific build assembly
+(`lib/net6.0/`) that a `net8.0` project resolves directly; 4.1.0 and later dropped
+every .NET asset below `net10.0`, so on `net8.0` they fall back to the
+`netstandard2.1` build. Confirmed from `obj/project.assets.json`:
+
+    net8.0  BCrypt.Net-Next/4.0.3  compile=lib/net6.0/BCrypt.Net-Next.dll
+
+This is the one package of the three that changes major version (2.x → 4.x), and
+it is the one that hashes passwords, so it was verified rather than assumed.
+
+### Existing password hashes still validate
+
+Checked before merge, as TEL-48 requires. Hashes were generated with
+BCrypt.Net-Next **2.0.0** — the version that was actually restoring, and therefore
+the version that produced whatever is in the deployed database — via
+`HashPassword(password, 12)`, matching `PasswordHasher.WorkFactor`. They were then
+verified under 4.0.3.
+
+| Direction | Result |
+|---|---|
+| Hashes written by 2.0.0, verified by 4.0.3 | 6 / 6 pass |
+| Hashes written by 2.0.0, wrong password, under 4.0.3 | 6 / 6 correctly rejected |
+| Hashes written by 4.0.3, verified by 2.0.0 (rollback safety) | 6 / 6 pass |
+
+Inputs covered: a passphrase with spaces, punctuation, a single character,
+non-ASCII including an emoji, and 71 characters (just under bcrypt's 72-byte input
+limit).
+
+Format is unchanged in both directions: 4.0.3's `HashPassword(password, 12)` still
+emits `$2a$12$`, so `PasswordHasher.IsHashed` and anything else sniffing the prefix
+behaves identically. Because the rollback direction also passes, a deploy of this
+change can be rolled back without stranding any password written while it was live.
+
+Six of those cases are now pinned as a permanent regression test in
+`Vitality.Models.Tests/PasswordHasherCompatibilityTests.cs`, with the real 2.0.0
+hashes as literals. A future BCrypt bump that changes hash format, work factor
+handling or string encoding fails the test suite instead of the login page.
+
+### Re-verification
+
+Same toolchain as above (SDK 8.0.131, linux-x64).
+
+| Step | Before (`development`) | After |
+|---|---|---|
+| `dotnet restore` | succeeds, **18 × NU1603** | succeeds, **0 × NU1603** |
+| `dotnet build -c Debug` | 0 errors, 563 warnings | 0 errors, **545 warnings** |
+| `dotnet test` | 31 passed | **43 passed** (31 + 12 new) |
+| `dotnet publish -c Release` | succeeds | succeeds |
+
+The 18-warning drop is exactly the NU1603 warnings and nothing else — the two
+builds' warning-code histograms are otherwise identical, so the version moves
+introduced no new warning of any kind. `NU1701`, `NU1902` and `NU1903` counts are
+unchanged; finding 2 below is still open.
 
 ## Reproducing
 
