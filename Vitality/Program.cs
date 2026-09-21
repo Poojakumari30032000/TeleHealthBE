@@ -391,12 +391,34 @@ builder.Services.AddSignalR(options =>
 
 builder.Services.Configure<Vitality.Models.Schedulers.SchedulerSettings>(
     builder.Configuration.GetSection("SchedulerSettings"));
-builder.Services.AddHostedService<MonthlyEventSchedulerService>();
-builder.Services.AddHostedService<InvoicePdfS3UploadService>();
-builder.Services.AddHostedService<RecurringPaymentService>();
-builder.Services.AddHostedService<IntakeReminderService>();
-builder.Services.AddHostedService<Vitality.Models.Schedulers.ReconciliationService>();
-builder.Services.AddHostedService<Vitality.Models.Schedulers.ProviderHoursMaterializationService>();
+
+// The six background schedulers write to the database the moment the process
+// starts - they do their work BEFORE their first Task.Delay, so lengthening an
+// interval does not stop the first pass. A developer whose connection string
+// points at a shared database therefore mutates it just by pressing F5:
+// ProviderHoursMaterializationService deletes and recreates every Available
+// slot, ReconciliationService writes an audit row per finding, and
+// RecurringPaymentService charges real cards.
+//
+// So they are OFF by default in Development and ON everywhere else. Deployed
+// environments need no config change and are unaffected.
+//
+// To run them locally anyway - pointing at a throwaway database, please - set:
+//     "SchedulerSettings": { "Enabled": true }
+// The flag is honoured in both directions, so Enabled:false also disables them
+// on a server if one ever needs to be quiesced without a redeploy.
+var schedulersEnabled = builder.Configuration.GetValue<bool?>("SchedulerSettings:Enabled")
+                        ?? !builder.Environment.IsDevelopment();
+
+if (schedulersEnabled)
+{
+    builder.Services.AddHostedService<MonthlyEventSchedulerService>();
+    builder.Services.AddHostedService<InvoicePdfS3UploadService>();
+    builder.Services.AddHostedService<RecurringPaymentService>();
+    builder.Services.AddHostedService<IntakeReminderService>();
+    builder.Services.AddHostedService<Vitality.Models.Schedulers.ReconciliationService>();
+    builder.Services.AddHostedService<Vitality.Models.Schedulers.ProviderHoursMaterializationService>();
+}
 builder.Services.Configure<ZoomOptions>(builder.Configuration.GetSection("Zoom"));
 builder.Services.AddMemoryCache();
 builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection(SmtpSettings.SectionName));
@@ -576,6 +598,24 @@ var app = builder.Build();
 // pipeline; anything genuinely fatal was already caught by
 // builder.ValidateRequiredSecrets() at the top of this file.
 app.LogSecretConfigurationWarnings();
+
+// Say plainly whether the background schedulers are running. Their absence is
+// silent and has no error of its own - recurring billing simply stops - so the
+// state is worth one unmissable line in the startup log.
+if (schedulersEnabled)
+{
+    app.Logger.LogInformation(
+        "Background schedulers ENABLED ({Environment}). They write to the database from startup onwards.",
+        app.Environment.EnvironmentName);
+}
+else
+{
+    app.Logger.LogWarning(
+        "Background schedulers DISABLED ({Environment}). No recurring payments, monthly invoices, " +
+        "appointment reminders, slot materialization, reconciliation or invoice PDF archival will run. " +
+        "Set SchedulerSettings:Enabled to true to override.",
+        app.Environment.EnvironmentName);
+}
 
 // Hand the OpenTok/Vonage Video credentials to Vitality.Models.CommonMethods,
 // which is a static class outside the DI container. These were hardcoded in

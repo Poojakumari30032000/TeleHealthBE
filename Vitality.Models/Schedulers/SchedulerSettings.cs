@@ -4,6 +4,19 @@ namespace Vitality.Models.Schedulers
     public class SchedulerSettings
     {
 
+        /// <summary>
+        /// Whether the six background schedulers are registered at all. Read in
+        /// Program.cs before the DI container is built, not through this class.
+        /// <para>
+        /// Null (the default) means "on outside Development, off in Development".
+        /// Setting it explicitly wins in both directions. It is declared here so
+        /// the key is discoverable alongside the intervals it governs; note that
+        /// no interval can switch a scheduler off, because every loop does its
+        /// work before its first delay.
+        /// </para>
+        /// </summary>
+        public bool? Enabled { get; set; }
+
         public int IntakeReminderIntervalSeconds { get; set; } = 60;
 
         public int MonthlyEventIntervalHours { get; set; } = 24;
