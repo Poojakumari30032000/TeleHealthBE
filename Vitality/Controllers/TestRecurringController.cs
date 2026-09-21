@@ -3,14 +3,21 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Vitality.Helper;
+using Vitality.Filters;
 using Vitality.Models.EntityClasses;
+using Vitality.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace DudeMeds.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [AllowAnonymous]
+    // Was anonymous (AllowAnonymous). trigger-recurring-payments charges real saved cards
+    // through Stripe and Square, so as an anonymous endpoint anyone who knew the
+    // route could bill every patient whose next payment date had arrived.
+    // Restricted to Super Admin, matching NotificationTestController's treatment
+    // of the other manual-trigger surface. See TEL-36.
+    [AuthorizeRoles(UserRole.SuperAdmin)]
     public class TestRecurringController : ControllerBase
     {
         private readonly IServiceScopeFactory _scopeFactory;
