@@ -590,7 +590,7 @@ public sealed class NotificationService : INotificationService
             {
                 var invoice = await _db.Sys_Invoices
                     .AsNoTracking()
-                    .Where(i => i.InvoiceNumber == invoiceNumber || i.InvoiceId.ToString() == invoiceNumber)
+                    .Where(InvoiceLookup.MatchesNumberOrId(invoiceNumber))
                     .FirstOrDefaultAsync(ct);
 
                 if (invoice != null && invoice.CreatedBy.HasValue)
@@ -643,7 +643,7 @@ public sealed class NotificationService : INotificationService
             {
                 var invoice = await _db.Sys_Invoices
                     .AsNoTracking()
-                    .Where(i => i.InvoiceNumber == invoiceNumber || i.InvoiceId.ToString() == invoiceNumber)
+                    .Where(InvoiceLookup.MatchesNumberOrId(invoiceNumber))
                     .Select(i => (long?)i.InvoiceId)
                     .FirstOrDefaultAsync(ct);
                 invoiceId = invoice;
@@ -843,7 +843,7 @@ public sealed class NotificationService : INotificationService
             {
                 var invoiceType = await _db.Sys_Invoices
                     .AsNoTracking()
-                    .Where(i => i.InvoiceNumber == invoiceNumber || i.InvoiceId.ToString() == invoiceNumber)
+                    .Where(InvoiceLookup.MatchesNumberOrId(invoiceNumber))
                     .Select(i => i.InvoiceType)
                     .FirstOrDefaultAsync(ct);
 
@@ -907,7 +907,7 @@ public sealed class NotificationService : INotificationService
             {
                 var invoice = await _db.Sys_Invoices
                     .AsNoTracking()
-                    .Where(i => i.InvoiceNumber == invoiceNumber || i.InvoiceId.ToString() == invoiceNumber)
+                    .Where(InvoiceLookup.MatchesNumberOrId(invoiceNumber))
                     .Select(i => (long?)i.InvoiceId)
                     .FirstOrDefaultAsync(ct);
                 invoiceId = invoice;
@@ -985,7 +985,7 @@ public sealed class NotificationService : INotificationService
             {
                 var invoice = await _db.Sys_Invoices
                     .AsNoTracking()
-                    .Where(i => i.InvoiceNumber == invoiceNumber || i.InvoiceId.ToString() == invoiceNumber)
+                    .Where(InvoiceLookup.MatchesNumberOrId(invoiceNumber))
                     .Select(i => (long?)i.InvoiceId)
                     .FirstOrDefaultAsync(ct);
                 invoiceId = invoice;
@@ -2339,7 +2339,7 @@ public sealed class NotificationService : INotificationService
             {
                 var invoice = await _db.Sys_Invoices
                     .AsNoTracking()
-                    .Where(i => i.InvoiceNumber == invoiceNumber || i.InvoiceId.ToString() == invoiceNumber)
+                    .Where(InvoiceLookup.MatchesNumberOrId(invoiceNumber))
                     .Select(i => new { i.InvoiceId, i.CreatedDate })
                     .FirstOrDefaultAsync(ct);
 
@@ -2497,7 +2497,7 @@ public sealed class NotificationService : INotificationService
             {
                 var invoice = await _db.Sys_Invoices
                     .AsNoTracking()
-                    .Where(i => i.InvoiceNumber == invoiceNumber || i.InvoiceId.ToString() == invoiceNumber)
+                    .Where(InvoiceLookup.MatchesNumberOrId(invoiceNumber))
                     .Select(i => (long?)i.InvoiceId)
                     .FirstOrDefaultAsync(ct);
                 invoiceId = invoice;

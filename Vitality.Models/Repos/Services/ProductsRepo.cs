@@ -1608,7 +1608,12 @@ namespace DudeMeds.Models.Repos.Services
         public List<GetAllDrugsInBundlesResponseDTO> GetAllDrugsInBundles(long BundleId)
         {
             List<GetAllDrugsInBundlesResponseDTO> response = new List<GetAllDrugsInBundlesResponseDTO>();
-            List<PD_DrugVarientsInBundle> list = _db.PD_DrugVarientsInBundles.Where(x => x.BundleId == BundleId && x.IsActive == true).GroupBy(x => x.DrugId).Select(x => x.First()).ToList();
+            // The Where runs on the server; the grouping is done here. EF Core cannot
+            // translate a GroupBy whose result selector projects a whole entity
+            // (Select(x => x.First())), and UPGRADE-NET8.md flagged this query as
+            // unsettled under EF Core 8. The row set is already narrowed to one
+            // bundle's active variants, so materialising it first costs nothing.
+            List<PD_DrugVarientsInBundle> list = _db.PD_DrugVarientsInBundles.Where(x => x.BundleId == BundleId && x.IsActive == true).ToList().GroupBy(x => x.DrugId).Select(x => x.First()).ToList();
             foreach (var item in list)
             {
                 GetAllDrugsInBundlesResponseDTO drug = new GetAllDrugsInBundlesResponseDTO
