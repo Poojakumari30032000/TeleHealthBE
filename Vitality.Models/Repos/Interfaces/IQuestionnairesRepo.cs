@@ -19,5 +19,7 @@ namespace DudeMeds.Models.Repos.Interfaces
         bool UpsertFacilityQuestionnaireJson(UpdateFacilityQuestionnaireJsonRequestDTO request, long userId);
         public GetQuestionnaireJsonByIdResponseDTO GetQuestionnaireJsonById(GetQuestionnaireJsonByIdRequestDTO request);
         GetQuestionnaireJsonByIdResponseDTO GetQuestionnaireJson(GetQuestionnaireJsonRequestDTO request);
+        List<GetPatientQuestionnaireSummaryDTO> GetPatientQuestionnaires(GetPatientQuestionnairesRequestDTO request);
+        List<GetPatientQuestionnaireResponseItemDTO>? GetPatientQuestionnaireResponses(GetPatientQuestionnaireResponsesRequestDTO request);
     }
 }

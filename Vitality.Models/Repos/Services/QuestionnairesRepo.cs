@@ -470,5 +470,83 @@ namespace DudeMeds.Models.Repos.Services
 
             return response;
         }
+
+        /// <summary>
+        /// The questionnaires a patient has completed, most recent first.
+        /// A patient completes a questionnaire as the intake form of a treatment,
+        /// so one submission is the set of answers recorded against one
+        /// PatientTreatmentId. A treatment with no answers is not a submission and
+        /// is left out.
+        /// </summary>
+        public List<GetPatientQuestionnaireSummaryDTO> GetPatientQuestionnaires(GetPatientQuestionnairesRequestDTO request)
+        {
+            if (request is null || request.PatientId <= 0)
+                return new List<GetPatientQuestionnaireSummaryDTO>();
+
+            // Correlated subqueries rather than a list Contains: EF Core 8 translates
+            // `list.Contains(column)` to OPENJSON, which needs compatibility level 130+.
+            // See the Database section of appsettings.json and TEL-43.
+            return (
+                from t in _db.PT_PatientTreatments.AsNoTracking()
+                where t.PatientId == request.PatientId
+                   && _db.PT_PatientTreatmentInTakeForms.Any(f => f.PatientTreatmentId == t.PatientTreatmentId)
+                select new GetPatientQuestionnaireSummaryDTO
+                {
+                    PatientTreatmentId = t.PatientTreatmentId,
+                    ProductId = t.ProductId,
+                    ProductName = _db.SYS_Products
+                        .Where(p => p.ProductId == t.ProductId)
+                        .Select(p => p.ProductName)
+                        .FirstOrDefault(),
+                    QuestionnaireName = (
+                        from qp in _db.SYS_QuestionnairesInProducts
+                        join q in _db.SYS_Questionnaires on qp.QuestionnaireId equals q.QuestionnaireId
+                        where qp.ProductId == t.ProductId
+                        select q.QuestionnaireName
+                    ).FirstOrDefault(),
+                    AnswerCount = _db.PT_PatientTreatmentInTakeForms
+                        .Count(f => f.PatientTreatmentId == t.PatientTreatmentId),
+                    SubmittedDate = _db.PT_PatientTreatmentInTakeForms
+                        .Where(f => f.PatientTreatmentId == t.PatientTreatmentId)
+                        .Max(f => f.CreatedDate)
+                })
+                .OrderByDescending(x => x.SubmittedDate)
+                .ToList();
+        }
+
+        /// <summary>
+        /// The answers of one submission, read only.
+        /// Returns null when the treatment does not belong to the calling patient,
+        /// so that changing the id in the request cannot read another patient's answers.
+        /// </summary>
+        public List<GetPatientQuestionnaireResponseItemDTO>? GetPatientQuestionnaireResponses(GetPatientQuestionnaireResponsesRequestDTO request)
+        {
+            if (request is null || request.PatientId <= 0 || request.PatientTreatmentId <= 0)
+                return null;
+
+            var belongsToPatient = _db.PT_PatientTreatments
+                .AsNoTracking()
+                .Any(t => t.PatientTreatmentId == request.PatientTreatmentId
+                       && t.PatientId == request.PatientId);
+
+            if (!belongsToPatient)
+                return null;
+
+            return _db.PT_PatientTreatmentInTakeForms
+                .AsNoTracking()
+                .Where(f => f.PatientTreatmentId == request.PatientTreatmentId)
+                .OrderBy(f => f.PatientTreatmentInTakeFormId)
+                .Select(f => new GetPatientQuestionnaireResponseItemDTO
+                {
+                    PatientTreatmentInTakeFormId = f.PatientTreatmentInTakeFormId,
+                    Question = f.Question,
+                    Answer = f.Answer,
+                    OtherText = f.OtherText,
+                    Type = f.Type,
+                    ConsentHtml = f.ConsentHtml,
+                    CreatedDate = f.CreatedDate
+                })
+                .ToList();
+        }
     }
 }
