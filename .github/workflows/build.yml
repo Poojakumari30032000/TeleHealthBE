@@ -1,0 +1,91 @@
+name: Build
+
+# Compiles the solution and runs the test suite on every PR and on every push
+# to an integration branch.
+#
+# Why this exists: branch-policy.yml validates branch names, PR targets and
+# titles, but nothing in CI ever compiled the code. The unattended nightly
+# agent cannot compile either - its sandbox has no .NET SDK and the egress
+# proxy blocks the installer - so until this workflow existed, "the checks are
+# green" only meant "the branch was named correctly".
+#
+# That matters beyond CI hygiene: the nightly runner may only move a ticket
+# from In Progress to PR Review when every required check on the PR head has
+# passed. This workflow is what makes that condition mean "it builds and the
+# tests pass".
+
+on:
+  pull_request:
+    branches: [development, main]
+  push:
+    branches: [development, main]
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        shell: bash
+        run: dotnet restore Vitality/Vitality.sln
+
+      # -c Debug is deliberate: TEL-9's acceptance criteria are stated against
+      # the Debug configuration, so this is the build they actually describe.
+      #
+      # The log is captured so the advisory step below can count NuGet audit
+      # warnings. `shell: bash` selects -eo pipefail, so a build failure fails
+      # the step rather than being masked by tee's exit code.
+      - name: Build (Debug)
+        shell: bash
+        run: |
+          dotnet build Vitality/Vitality.sln -c Debug --no-restore 2>&1 | tee build.log
+
+      # Reported, not enforced - on purpose.
+      #
+      # AutoMapper 13.0.1 currently raises 4 NU1903 warnings (TEL-49). Failing
+      # the build on NU1903 today would red-light every PR in the repository
+      # until that ticket's licensing decision is made, so this step surfaces
+      # the count instead.
+      #
+      # Once TEL-49 lands, make it a hard gate by adding
+      #   <WarningsAsErrors>NU1903</WarningsAsErrors>
+      # to Directory.Build.props. TEL-9's "zero NU1903 warnings" criterion then
+      # becomes machine-enforced permanently instead of re-checked by hand.
+      - name: Report NuGet audit warnings
+        if: always()
+        shell: bash
+        run: |
+          if [[ ! -f build.log ]]; then
+            echo "No build log - the build step did not run." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "### NuGet audit"
+            echo ""
+            echo "| Code | Meaning | Warnings |"
+            echo "| --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          report() {
+            local code="$1" meaning="$2" count
+            count=$(grep -c -- "$code" build.log || true)
+            echo "| \`$code\` | $meaning | $count |" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          report NU1903 "high-severity advisory"      # TEL-49: AutoMapper 13.0.1
+          report NU1902 "moderate-severity advisory"
+          report NU1603 "approximate version match"   # TEL-48: pinned versions
+
+      - name: Test
+        shell: bash
+        run: dotnet test Vitality/Vitality.sln -c Debug --no-build --verbosity normal
