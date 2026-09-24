@@ -1,16 +1,21 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Vitality.Filters;
 using Vitality.Helper;
 using Vitality.Models.CommonMethods;
 using Vitality.Models.EntityClasses;
+using Vitality.Models.Enums;
 using Vitality.Models.Repos.Interfaces;
 
 namespace Vitality.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [AllowAnonymous]
+    // Was anonymous (AllowAnonymous). GetAllAppointments returned 50 real appointment rows
+    // - patient ids, treatment ids and times - to any unauthenticated caller.
+    // Verified against the live database during TEL-36. Restricted to Super Admin.
+    [AuthorizeRoles(UserRole.SuperAdmin)]
     public class IntakeReminderDiagnosticController : ControllerBase
     {
         private readonly MainContext _db;

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Vitality.Filters;
 using Vitality.Helper;
 using Vitality.Models.EntityClasses;
 using Vitality.Models.Enums;
@@ -16,7 +17,10 @@ namespace DudeMeds.Controllers
 
     [Route("api/[controller]")]
     [ApiController]
-    [AllowAnonymous]
+    // Was anonymous (AllowAnonymous). trigger-monthly-invoice generates billable invoices
+    // for every active facility, so anonymous access let anyone create real
+    // financial records. Restricted to Super Admin. See TEL-36.
+    [AuthorizeRoles(UserRole.SuperAdmin)]
     public class TestMonthlyInvoiceController : ControllerBase
     {
         private readonly IServiceScopeFactory _scopeFactory;

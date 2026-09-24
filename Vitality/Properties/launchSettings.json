@@ -14,7 +14,30 @@
       "dotnetRunMessages": true,
       "launchBrowser": true,
       "launchUrl": "swagger",
-      "applicationUrl": "https://localhost:7039;https://0.0.0.0:5014",
+
+      // ---------------------------------------------------------------------
+      //  Why the Windows Defender Firewall prompt appeared on every run
+      //
+      //  The original value bound Kestrel to 0.0.0.0, meaning EVERY network
+      //  interface - Wi-Fi, Ethernet, VPN. Windows only prompts for non-
+      //  loopback listeners, so that second address is what raised the dialog.
+      //  Clicking Allow also published the API to the local network at
+      //  https://<your-ip>:5014, reachable by anyone on the same Wi-Fi.
+      //
+      //  Commented out rather than deleted, as requested. Nothing local needs
+      //  it: the Angular dev server calls localhost:7039, which matches
+      //  baseURL in TeleHealthFE/src/environments/environment.ts.
+      //
+      //  Restore it only to reach the API from another device (a phone, say),
+      //  and then allow the rule on Private networks only - never Public:
+      //    New-NetFirewallRule -DisplayName "TeleHealth API (private only)" `
+      //      -Direction Inbound -LocalPort 5014 -Protocol TCP `
+      //      -Profile Private -Action Allow
+      //
+      //  "applicationUrl": "https://localhost:7039;https://0.0.0.0:5014",
+      // ---------------------------------------------------------------------
+      "applicationUrl": "https://localhost:7039",
+
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
