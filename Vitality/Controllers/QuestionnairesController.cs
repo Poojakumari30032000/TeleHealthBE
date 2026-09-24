@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Vitality.Helper;
 using Vitality.Filters;
+using Vitality.Models.Enums;
 using Vitality.Models.Security;
 
 namespace DudeMeds.Controllers
@@ -38,6 +39,7 @@ namespace DudeMeds.Controllers
         long? OrgId() => TryGet<long>("OrganizationId");
         long? RoleId() => TryGet<long>("RoleId");
         long? FacilityIdClaim() => TryGet<long>("FacilityId");
+        long? PatientIdClaim() => TryGet<long>("PatientId");
 
         T? TryGet<T>(string key)
         {
@@ -249,6 +251,73 @@ namespace DudeMeds.Controllers
             }
             catch (Exception ex) { resp.Message = ex.Message; }
             return resp;
+        }
+
+        /// <summary>
+        /// The questionnaires the calling patient has completed, most recent first.
+        /// The patient is taken from the PatientId claim and is never accepted from
+        /// the caller, so this endpoint cannot be pointed at another patient.
+        /// </summary>
+        [HttpGet("getPatientQuestionnaires")]
+        [AuthorizeRoles(UserRole.Patient)]
+        [RequiresPermission(Permissions.PatientPortal.View)]
+        public ApiResponse<List<GetPatientQuestionnaireSummaryDTO>> GetPatientQuestionnaires()
+        {
+            var response = new ApiResponse<List<GetPatientQuestionnaireSummaryDTO>>();
+            try
+            {
+                var patientId = PatientIdClaim();
+                if (patientId is null || patientId <= 0)
+                {
+                    response.Message = "No patient is associated with this account.";
+                    return response;
+                }
+
+                response.Data = _IQuestionnairesRepo.GetPatientQuestionnaires(
+                    new GetPatientQuestionnairesRequestDTO { PatientId = patientId.Value });
+            }
+            catch (Exception ex) { response.Message = ex.Message; }
+            return response;
+        }
+
+        /// <summary>
+        /// The answers of one of the calling patient's own submissions, read only.
+        /// The repository re-checks ownership against the PatientId claim, so a
+        /// changed PatientTreatmentId returns nothing rather than another
+        /// patient's answers.
+        /// </summary>
+        [HttpGet("getPatientQuestionnaireResponses")]
+        [AuthorizeRoles(UserRole.Patient)]
+        [RequiresPermission(Permissions.PatientPortal.View)]
+        public ApiResponse<List<GetPatientQuestionnaireResponseItemDTO>> GetPatientQuestionnaireResponses([FromQuery] GetByIdRequestDTO request)
+        {
+            var response = new ApiResponse<List<GetPatientQuestionnaireResponseItemDTO>>();
+            try
+            {
+                var patientId = PatientIdClaim();
+                if (patientId is null || patientId <= 0)
+                {
+                    response.Message = "No patient is associated with this account.";
+                    return response;
+                }
+
+                var result = _IQuestionnairesRepo.GetPatientQuestionnaireResponses(
+                    new GetPatientQuestionnaireResponsesRequestDTO
+                    {
+                        PatientTreatmentId = request?.Id ?? 0,
+                        PatientId = patientId.Value
+                    });
+
+                if (result is null)
+                {
+                    response.Message = "Questionnaire not found.";
+                    return response;
+                }
+
+                response.Data = result;
+            }
+            catch (Exception ex) { response.Message = ex.Message; }
+            return response;
         }
     }
 }
