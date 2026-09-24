@@ -85,6 +85,12 @@ connection — so it runs in CI, where there is no database. It asserts:
 - both terms travel as one `WHERE` against one query, so nothing is filtered
   client-side.
 
+All four pass, on
+[Build #6](https://github.com/Poojakumari30032000/TeleHealthBE/actions/runs/36032767088)
+(`ba01e03`, the PR that adds them): 0 errors, **68 tests, 68 passed**. So EF Core 8
+does translate this lookup as two typed comparisons with nothing converted — the
+concern that opened the ticket is answered for the query itself.
+
 This is the strongest evidence obtainable without a database. It does not replace
 criterion 3.
 
@@ -109,4 +115,5 @@ With the .NET 8 SDK on `PATH` (see `agent-setup.sh`):
     dotnet build Vitality/Vitality.sln -c Debug
     dotnet test  Vitality/Vitality.sln -c Debug --no-build --verbosity normal
 
-Expect 0 errors and 68 tests passing — 64 plus the 4 translation tests added here.
+Expect 0 errors and 68 tests passing — the 64 on `development` plus the 4
+translation tests added here.
