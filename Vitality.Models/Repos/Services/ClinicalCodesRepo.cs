@@ -239,7 +239,190 @@ namespace DudeMeds.Models.Repos.Services
                 }).FirstOrDefault();
         }
 
+        /// <summary>
+        /// TEL-21 - ranked, paged search of one code system as it stood on a date.
+        ///
+        /// The release in force on that date is resolved first, and only its rows
+        /// are searched, so loading more years never slows a search down or mixes
+        /// wordings from different releases. Ranking is <see cref="ClinicalCodeMatchRank"/>;
+        /// within a description rank, billable codes come before headers and
+        /// shorter (more specific) descriptions before longer ones.
+        /// </summary>
+        public SearchClinicalCodesResultDTO SearchCodes(SearchClinicalCodesRequestDTO request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+
+            var system = string.IsNullOrWhiteSpace(request.CodeSystem)
+                ? ClinicalCodeSystem.Icd10Cm
+                : request.CodeSystem.Trim().ToUpperInvariant();
+            if (system != ClinicalCodeSystem.Icd10Cm && system != ClinicalCodeSystem.Cpt)
+                throw new ArgumentException($"Code system must be '{ClinicalCodeSystem.Icd10Cm}' or '{ClinicalCodeSystem.Cpt}'.");
+
+            var day = (request.OnDate ?? DateTime.UtcNow).Date;
+            var pageNumber = ClinicalCodeSearch.ClampPageNumber(request.PageNumber);
+            var pageSize = ClinicalCodeSearch.ClampPageSize(request.PageSize);
+
+            var result = new SearchClinicalCodesResultDTO
+            {
+                CodeSystem = system,
+                OnDate = day,
+                PageNumber = pageNumber,
+                PageSize = pageSize
+            };
+
+            var terms = ClinicalCodeSearch.Parse(request.Query, system);
+            if (!terms.IsSearchable) return result;
+
+            var version = _db.SYS_CodeSetVersions.AsNoTracking()
+                .Where(v => v.CodeSystem == system
+                         && v.IsActive
+                         && v.EffectiveDate <= day
+                         && (v.TerminationDate == null || v.TerminationDate >= day))
+                .OrderByDescending(v => v.EffectiveDate)
+                .Select(v => new { v.CodeSetVersionId, v.VersionLabel })
+                .FirstOrDefault();
+
+            // No release in force on that date (for CPT: none loaded until licensed).
+            if (version is null) return result;
+
+            result.CodeSetVersionId = version.CodeSetVersionId;
+            result.VersionLabel = version.VersionLabel;
+
+            var isIcd = system == ClinicalCodeSystem.Icd10Cm;
+            var sql = BuildSearchSql(isIcd, request.BillableOnly && isIcd, terms.Words.Count);
+
+            var connection = (SqlConnection)_db.Database.GetDbConnection();
+            var openedHere = connection.State != ConnectionState.Open;
+            if (openedHere) connection.Open();
+            try
+            {
+                using (var cmd = new SqlCommand(sql + SearchPageSql, connection))
+                {
+                    AddSearchParameters(cmd, version.CodeSetVersionId, day, terms);
+                    cmd.Parameters.Add("@skip", SqlDbType.Int).Value = (pageNumber - 1) * pageSize;
+                    cmd.Parameters.Add("@take", SqlDbType.Int).Value = pageSize;
+
+                    using var reader = cmd.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        result.Items.Add(new ClinicalCodeSearchItemDTO
+                        {
+                            CodeId = reader.GetInt64(0),
+                            CodeSetVersionId = version.CodeSetVersionId,
+                            Code = reader.GetString(1),
+                            DisplayCode = reader.GetString(2),
+                            ShortDescription = reader.IsDBNull(3) ? null : reader.GetString(3),
+                            LongDescription = reader.GetString(4),
+                            IsBillable = reader.GetBoolean(5),
+                            EffectiveDate = reader.GetDateTime(6),
+                            TerminationDate = reader.IsDBNull(7) ? null : reader.GetDateTime(7),
+                            MatchRank = reader.GetInt32(8)
+                        });
+                        result.TotalCount = reader.GetInt32(9);
+                    }
+                }
+
+                // Asked for a page past the end: the total still has to be right.
+                if (result.Items.Count == 0 && pageNumber > 1)
+                {
+                    using var countCmd = new SqlCommand(sql + "SELECT COUNT(*) FROM m;", connection);
+                    AddSearchParameters(countCmd, version.CodeSetVersionId, day, terms);
+                    result.TotalCount = (int)countCmd.ExecuteScalar();
+                }
+            }
+            finally
+            {
+                if (openedHere) connection.Close();
+            }
+
+            return result;
+        }
+
         // ------------------------------------------------------------ SQL
+
+        /// <summary>
+        /// The matching rows of one release with their rank, as CTE "m". Only the
+        /// number of word parameters varies; every value is a parameter.
+        ///
+        /// A row qualifies when its code starts with the query, or its description
+        /// contains every word. That filter is the only thing evaluated against
+        /// every row of the release; the rank is worked out for matches only.
+        ///
+        /// Descriptions are compared upper-cased under a binary collation. On the
+        /// real FY2026 file that is about ten times faster than a LIKE under the
+        /// database's own (Windows or SQL) collation - roughly 45 ms against 400 ms
+        /// per pattern over 98,000 rows - and it makes search case-insensitive
+        /// whatever the database default is. It is accent-sensitive, which costs
+        /// nothing today: every ICD-10-CM FY2026 description is plain ASCII.
+        /// </summary>
+        private static string BuildSearchSql(bool isIcd, bool billableOnly, int wordCount)
+        {
+            var table = isIcd ? "dbo.SYS_Icd10Code" : "dbo.SYS_CptCode";
+            var id = isIcd ? "c.Icd10CodeId" : "c.CptCodeId";
+            var display = isIcd ? "c.DisplayCode" : "c.Code";
+            var billable = isIcd ? "c.IsBillable" : "CAST(1 AS BIT)";
+
+            var allWords = wordCount > 0
+                ? "(" + string.Join(" AND ", Enumerable.Range(0, wordCount).Select(i => $"d.D LIKE @w{i}")) + ")"
+                : "1 = 0";
+
+            return $@"
+WITH m AS (
+    SELECT {id} AS CodeId, c.Code, {display} AS DisplayCode, c.ShortDescription, c.LongDescription,
+           {billable} AS IsBillable, c.EffectiveDate, c.TerminationDate,
+           CASE
+               WHEN c.Code = @code        THEN {(int)ClinicalCodeMatchRank.ExactCode}
+               WHEN c.Code LIKE @codeLike THEN {(int)ClinicalCodeMatchRank.CodePrefix}
+               WHEN d.D LIKE @phraseStart THEN {(int)ClinicalCodeMatchRank.DescriptionStartsWith}
+               WHEN d.D LIKE @phraseWord  THEN {(int)ClinicalCodeMatchRank.DescriptionWordStartsWith}
+               WHEN d.D LIKE @phraseAny   THEN {(int)ClinicalCodeMatchRank.DescriptionContains}
+               ELSE {(int)ClinicalCodeMatchRank.DescriptionAllWords}
+           END AS MatchRank
+      FROM {table} c
+     CROSS APPLY (SELECT UPPER(c.LongDescription) COLLATE Latin1_General_100_BIN2 AS D) d
+     WHERE c.CodeSetVersionId = @v
+       AND c.IsActive = 1
+       AND c.EffectiveDate <= @day
+       AND (c.TerminationDate IS NULL OR c.TerminationDate >= @day)
+       {(billableOnly ? "AND c.IsBillable = 1" : string.Empty)}
+       AND (c.Code LIKE @codeLike OR {allWords})
+)
+";
+        }
+
+        // Code ranks keep code order, which is the classification's hierarchy
+        // (E11, E11.0, E11.00 ...). Description ranks put billable codes first,
+        // then the shortest description.
+        private const string SearchPageSql = @"
+SELECT CodeId, Code, DisplayCode, ShortDescription, LongDescription, IsBillable,
+       EffectiveDate, TerminationDate, MatchRank, COUNT(*) OVER () AS TotalCount
+  FROM m
+ ORDER BY MatchRank,
+          CASE WHEN MatchRank <= 1 THEN 0 WHEN IsBillable = 1 THEN 0 ELSE 1 END,
+          CASE WHEN MatchRank <= 1 THEN 0 ELSE LEN(LongDescription) END,
+          Code
+OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY;";
+
+        private static void AddSearchParameters(SqlCommand cmd, long versionId, DateTime day, ClinicalCodeSearchTerms terms)
+        {
+            var phrase = ClinicalCodeSearch.EscapeLike(terms.Phrase);
+
+            cmd.Parameters.Add("@v", SqlDbType.BigInt).Value = versionId;
+            cmd.Parameters.Add("@day", SqlDbType.Date).Value = day;
+            cmd.Parameters.Add("@code", SqlDbType.NVarChar, 8).Value = (object?)terms.Code ?? DBNull.Value;
+            cmd.Parameters.Add("@codeLike", SqlDbType.NVarChar, 32).Value =
+                terms.Code is null ? DBNull.Value : ClinicalCodeSearch.EscapeLike(terms.Code) + "%";
+            cmd.Parameters.Add("@phraseStart", SqlDbType.NVarChar, 512).Value = phrase + "%";
+            cmd.Parameters.Add("@phraseWord", SqlDbType.NVarChar, 512).Value = "% " + phrase + "%";
+            cmd.Parameters.Add("@phraseAny", SqlDbType.NVarChar, 512).Value = "%" + phrase + "%";
+
+            if (terms.Words.Count > 0)
+            {
+                for (var i = 0; i < terms.Words.Count; i++)
+                    cmd.Parameters.Add($"@w{i}", SqlDbType.NVarChar, 512).Value =
+                        "%" + ClinicalCodeSearch.EscapeLike(terms.Words[i]) + "%";
+            }
+        }
 
         // COLLATE DATABASE_DEFAULT: a temp table otherwise takes tempdb's
         // collation, and the MERGE join on Code would fail on a mismatch.

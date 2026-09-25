@@ -77,3 +77,66 @@ namespace DudeMeds.Models.DTOs.ClinicalCodes
         public string VersionLabel { get; set; } = string.Empty;
     }
 }
+
+namespace DudeMeds.Models.DTOs.ClinicalCodes
+{
+    // TEL-21 - code search.
+
+    public class SearchClinicalCodesRequestDTO
+    {
+        /// <summary>'ICD10CM' (the default) or 'CPT'.</summary>
+        public string? CodeSystem { get; set; }
+
+        /// <summary>A code, part of a code (with or without the dot), or words from the description.</summary>
+        public string Query { get; set; } = string.Empty;
+
+        /// <summary>Only codes in force on this date are returned. Defaults to today (UTC).</summary>
+        public DateTime? OnDate { get; set; }
+
+        /// <summary>Leave out ICD-10-CM header (category) codes, which are not valid on a claim.</summary>
+        public bool BillableOnly { get; set; }
+
+        public int PageNumber { get; set; } = 1;
+        public int PageSize { get; set; } = 20;
+    }
+
+    public class SearchClinicalCodesResultDTO
+    {
+        public string CodeSystem { get; set; } = string.Empty;
+
+        /// <summary>The release searched: the one in force on <see cref="OnDate"/>. Null when none was.</summary>
+        public long? CodeSetVersionId { get; set; }
+        public string? VersionLabel { get; set; }
+        public DateTime OnDate { get; set; }
+
+        public int PageNumber { get; set; }
+        public int PageSize { get; set; }
+        public int TotalCount { get; set; }
+        public List<ClinicalCodeSearchItemDTO> Items { get; set; } = new();
+    }
+
+    public class ClinicalCodeSearchItemDTO
+    {
+        /// <summary>Icd10CodeId or CptCodeId, depending on the code system.</summary>
+        public long CodeId { get; set; }
+        public long CodeSetVersionId { get; set; }
+
+        /// <summary>As stored, without the dot: 'E1165'.</summary>
+        public string Code { get; set; } = string.Empty;
+
+        /// <summary>As people write it: 'E11.65'. Equal to <see cref="Code"/> for CPT.</summary>
+        public string DisplayCode { get; set; } = string.Empty;
+
+        public string? ShortDescription { get; set; }
+        public string LongDescription { get; set; } = string.Empty;
+
+        /// <summary>Always true for CPT, which has no header codes.</summary>
+        public bool IsBillable { get; set; }
+
+        public DateTime EffectiveDate { get; set; }
+        public DateTime? TerminationDate { get; set; }
+
+        /// <summary>A ClinicalCodeMatchRank value: 0 exact code ... 5 all words somewhere in the description.</summary>
+        public int MatchRank { get; set; }
+    }
+}
