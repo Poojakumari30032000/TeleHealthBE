@@ -319,5 +319,176 @@ namespace DudeMeds.Controllers
             catch (Exception ex) { response.Message = ex.Message; }
             return response;
         }
+
+        // ================================================================
+        // TEL-57 - questionnaires assigned to a patient.
+        // The caller is always built from claims. A patient id, where one is
+        // taken from the request, only names the patient being acted on - the
+        // repository checks the caller may reach that patient.
+        // ================================================================
+
+        PatientQuestionnaireCallerDTO Caller() => new PatientQuestionnaireCallerDTO
+        {
+            UserId = UserId() ?? 0,
+            RoleId = RoleId(),
+            OrganizationId = OrgId(),
+            PatientId = RoleId() == (long)UserRole.Patient ? PatientIdClaim() : null
+        };
+
+        static ApiResponse<T> Failed<T>(ApiResponse<T> response, string message)
+        {
+            response.Status = 0;
+            response.Success = false;
+            response.Message = message;
+            return response;
+        }
+
+        static ApiResponse<long?> FromResult(PatientQuestionnaireResultDTO result)
+        {
+            var response = new ApiResponse<long?>();
+            if (!result.Success) return Failed(response, result.Message);
+            response.Success = true;
+            response.Message = result.Message;
+            response.Data = result.Id;
+            return response;
+        }
+
+        /// <summary>Questionnaires staff can give to this patient.</summary>
+        [HttpGet("getAssignableQuestionnaires")]
+        [AuthorizeRoles(UserRole.SuperAdmin, UserRole.GlobalAdmin, UserRole.ClinicAdmin, UserRole.Provider)]
+        [RequiresPermission(Permissions.Patient.Edit)]
+        public ApiResponse<List<AssignableQuestionnaireDTO>> GetAssignableQuestionnaires([FromQuery] GetByIdRequestDTO request)
+        {
+            var response = new ApiResponse<List<AssignableQuestionnaireDTO>>();
+            try
+            {
+                response.Data = _IQuestionnairesRepo.GetAssignableQuestionnaires(request?.Id ?? 0, Caller());
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
+
+        [HttpPost("assignPatientQuestionnaire")]
+        [AuthorizeRoles(UserRole.SuperAdmin, UserRole.GlobalAdmin, UserRole.ClinicAdmin, UserRole.Provider)]
+        [RequiresPermission(Permissions.Patient.Edit)]
+        public ApiResponse<long?> AssignPatientQuestionnaire([FromBody] AssignPatientQuestionnaireRequestDTO request)
+        {
+            try
+            {
+                return FromResult(_IQuestionnairesRepo.AssignPatientQuestionnaire(request, Caller()));
+            }
+            catch (Exception ex) { return Failed(new ApiResponse<long?>(), ex.Message); }
+        }
+
+        [HttpPost("cancelPatientQuestionnaire")]
+        [AuthorizeRoles(UserRole.SuperAdmin, UserRole.GlobalAdmin, UserRole.ClinicAdmin, UserRole.Provider)]
+        [RequiresPermission(Permissions.Patient.Edit)]
+        public ApiResponse<long?> CancelPatientQuestionnaire([FromBody] GetByIdRequestDTO request)
+        {
+            try
+            {
+                return FromResult(_IQuestionnairesRepo.CancelPatientQuestionnaire(request?.Id ?? 0, Caller()));
+            }
+            catch (Exception ex) { return Failed(new ApiResponse<long?>(), ex.Message); }
+        }
+
+        /// <summary>Every assignment of one patient, for the provider's patient view.</summary>
+        [HttpGet("getPatientQuestionnaireAssignments")]
+        [AuthorizeRoles(UserRole.SuperAdmin, UserRole.GlobalAdmin, UserRole.ClinicAdmin, UserRole.Provider)]
+        [RequiresPermission(Permissions.Patient.View)]
+        public ApiResponse<List<PatientQuestionnaireAssignmentDTO>> GetPatientQuestionnaireAssignments([FromQuery] GetByIdRequestDTO request)
+        {
+            var response = new ApiResponse<List<PatientQuestionnaireAssignmentDTO>>();
+            try
+            {
+                response.Data = _IQuestionnairesRepo.GetPatientQuestionnaireAssignments(request?.Id ?? 0, Caller());
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
+
+        /// <summary>The calling patient's assigned questionnaires, with status.</summary>
+        [HttpGet("getMyAssignedQuestionnaires")]
+        [AuthorizeRoles(UserRole.Patient)]
+        [RequiresPermission(Permissions.PatientPortal.View)]
+        public ApiResponse<List<PatientQuestionnaireAssignmentDTO>> GetMyAssignedQuestionnaires()
+        {
+            var response = new ApiResponse<List<PatientQuestionnaireAssignmentDTO>>();
+            try
+            {
+                var caller = Caller();
+                if (caller.PatientId is null || caller.PatientId <= 0)
+                    return Failed(response, "No patient is associated with this account.");
+
+                response.Data = _IQuestionnairesRepo.GetMyAssignedQuestionnaires(caller);
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
+
+        /// <summary>The form and saved progress of one of the patient's open assignments.</summary>
+        [HttpGet("getMyQuestionnaireForm")]
+        [AuthorizeRoles(UserRole.Patient)]
+        [RequiresPermission(Permissions.PatientPortal.View)]
+        public ApiResponse<PatientQuestionnaireFormDTO> GetMyQuestionnaireForm([FromQuery] GetByIdRequestDTO request)
+        {
+            var response = new ApiResponse<PatientQuestionnaireFormDTO>();
+            try
+            {
+                var result = _IQuestionnairesRepo.GetMyQuestionnaireForm(request?.Id ?? 0, Caller());
+                if (result is null)
+                    return Failed(response, "This questionnaire is not available. It may already have been submitted.");
+
+                response.Data = result;
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
+
+        [HttpPost("saveMyQuestionnaireDraft")]
+        [AuthorizeRoles(UserRole.Patient)]
+        [RequiresPermission(Permissions.PatientPortal.View)]
+        public ApiResponse<long?> SaveMyQuestionnaireDraft([FromBody] SavePatientQuestionnaireDraftRequestDTO request)
+        {
+            try
+            {
+                return FromResult(_IQuestionnairesRepo.SaveMyQuestionnaireDraft(request, Caller()));
+            }
+            catch (Exception ex) { return Failed(new ApiResponse<long?>(), ex.Message); }
+        }
+
+        [HttpPost("submitMyQuestionnaire")]
+        [AuthorizeRoles(UserRole.Patient)]
+        [RequiresPermission(Permissions.PatientPortal.View)]
+        public ApiResponse<long?> SubmitMyQuestionnaire([FromBody] SubmitPatientQuestionnaireRequestDTO request)
+        {
+            try
+            {
+                return FromResult(_IQuestionnairesRepo.SubmitMyQuestionnaire(request, Caller()));
+            }
+            catch (Exception ex) { return Failed(new ApiResponse<long?>(), ex.Message); }
+        }
+
+        /// <summary>
+        /// A submitted assignment and its answers, read only. Open to the patient
+        /// for their own, and to staff for patients they can reach.
+        /// </summary>
+        [HttpGet("getPatientQuestionnaireSubmission")]
+        [AuthorizeRoles(UserRole.SuperAdmin, UserRole.GlobalAdmin, UserRole.ClinicAdmin, UserRole.Provider, UserRole.Patient)]
+        [RequiresPermission(Permissions.Patient.View, Permissions.PatientPortal.View)]
+        public ApiResponse<PatientQuestionnaireSubmissionDTO> GetPatientQuestionnaireSubmission([FromQuery] GetByIdRequestDTO request)
+        {
+            var response = new ApiResponse<PatientQuestionnaireSubmissionDTO>();
+            try
+            {
+                var result = _IQuestionnairesRepo.GetPatientQuestionnaireSubmission(request?.Id ?? 0, Caller());
+                if (result is null)
+                    return Failed(response, "Questionnaire not found.");
+
+                response.Data = result;
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
     }
 }
