@@ -56,6 +56,7 @@ namespace Vitality.Models.EntityClasses
         public virtual DbSet<PT_PatientTreatmentDocument> PT_PatientTreatmentDocuments { get; set; } = null!;
         public virtual DbSet<PT_PatientDocument> PT_PatientDocuments { get; set; } = null!;
         public virtual DbSet<PT_PatientTreatmentSoapNote> PT_PatientTreatmentSoapNotes { get; set; } = null!;
+        public virtual DbSet<PT_PatientTreatmentSoapNoteCode> PT_PatientTreatmentSoapNoteCodes { get; set; } = null!;
         public virtual DbSet<PT_PatientTreatmentInTakeForm> PT_PatientTreatmentInTakeForms { get; set; } = null!;
         public virtual DbSet<PT_PatientQuestionnaire> PT_PatientQuestionnaires { get; set; } = null!;
         public virtual DbSet<PT_PatientQuestionnaireAnswer> PT_PatientQuestionnaireAnswers { get; set; } = null!;
@@ -1025,6 +1026,30 @@ namespace Vitality.Models.EntityClasses
                     .HasForeignKey(d => d.PatientTreatmentId)
                     .OnDelete(DeleteBehavior.ClientSetNull)
                     .HasConstraintName("FK_PT_PatientTreatmentSoapNote_PT_PatientTreatment");
+            });
+
+            // TEL-22 - codes on a treatment SOAP note.
+            modelBuilder.Entity<PT_PatientTreatmentSoapNoteCode>(entity =>
+            {
+                entity.HasKey(e => e.SoapNoteCodeId);
+                entity.ToTable("PT_PatientTreatmentSoapNoteCode");
+                entity.HasIndex(e => new { e.SoapNoteId, e.CodeSystem, e.Code }, "UX_PT_PatientTreatmentSoapNoteCode_Note_System_Code").IsUnique();
+                entity.Property(e => e.CodeSystem).HasMaxLength(16);
+                entity.Property(e => e.Code).HasMaxLength(8);
+                entity.Property(e => e.DisplayCode).HasMaxLength(9);
+                entity.Property(e => e.Description).HasMaxLength(1000);
+                entity.Property(e => e.CreatedDate).HasColumnType("datetime").HasDefaultValueSql("(getutcdate())");
+                entity.Property(e => e.ModifiedDate).HasColumnType("datetime");
+                entity.HasOne(d => d.SoapNote)
+                    .WithMany()
+                    .HasForeignKey(d => d.SoapNoteId)
+                    .OnDelete(DeleteBehavior.ClientSetNull)
+                    .HasConstraintName("FK_PT_PatientTreatmentSoapNoteCode_PT_PatientTreatmentSoapNote");
+                entity.HasOne(d => d.CodeSetVersion)
+                    .WithMany()
+                    .HasForeignKey(d => d.CodeSetVersionId)
+                    .OnDelete(DeleteBehavior.ClientSetNull)
+                    .HasConstraintName("FK_PT_PatientTreatmentSoapNoteCode_SYS_CodeSetVersion");
             });
 
             modelBuilder.Entity<PT_PatientTreatmentDocument>(entity =>
