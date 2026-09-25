@@ -23,11 +23,18 @@ namespace DudeMeds.Models.Repos.Services
     ///
     /// An import bulk-copies the parsed file into a temp table and MERGEs it into
     /// the release's rows in one transaction. A full ICD-10-CM release is about
-    /// 74,000 codes, which row-by-row EF inserts would take minutes to write.
+    /// 98,000 codes, which row-by-row EF inserts would take minutes to write.
+    ///
+    /// Every statement that touches the release's rows works in batches of
+    /// <see cref="WriteBatchSize"/>. The hosted development database enforces
+    /// a query governor cost limit of 3000, and a single MERGE of a full release
+    /// is estimated just above it (3054), so the server refuses it. The import
+    /// stays within whatever limit the host sets instead of lifting it.
     /// </summary>
     public class ClinicalCodesRepo : IClinicalCodesRepo
     {
         private const int CommandTimeoutSeconds = 300;
+        private const int WriteBatchSize = 5000;
         private const int Icd10LongDescriptionMax = 400;
         private const int CptLongDescriptionMax = 1000;
 
@@ -147,9 +154,12 @@ namespace DudeMeds.Models.Repos.Services
             Execute(connection, sqlTx, StagingTableSql);
             BulkCopyToStaging(connection, sqlTx, parsed.Codes);
 
-            var (inserted, updated, deactivated) = system == ClinicalCodeSystem.Icd10Cm
-                ? Merge(connection, sqlTx, MergeIcd10Sql, version)
-                : Merge(connection, sqlTx, MergeCptSql, version);
+            var (inserted, updated) = MergeInBatches(
+                connection, sqlTx,
+                system == ClinicalCodeSystem.Icd10Cm ? MergeIcd10BatchSql : MergeCptBatchSql,
+                version, parsed.Codes.Count);
+
+            var deactivated = DeactivateCodesNotInFile(connection, sqlTx, codeTable, version);
 
             var closed = CloseEarlierReleases(connection, sqlTx, codeTable, version, userId);
 
@@ -243,9 +253,11 @@ namespace DudeMeds.Models.Repos.Services
 
         // COLLATE DATABASE_DEFAULT: a temp table otherwise takes tempdb's
         // collation, and the MERGE join on Code would fail on a mismatch.
+        // RowNo is the clustered key so each batch reads one contiguous range.
         private const string StagingTableSql = @"
 CREATE TABLE #CodeStaging (
-    Code             NVARCHAR(8)    COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY,
+    RowNo            INT            NOT NULL PRIMARY KEY,
+    Code             NVARCHAR(8)    COLLATE DATABASE_DEFAULT NOT NULL UNIQUE,
     DisplayCode      NVARCHAR(9)    COLLATE DATABASE_DEFAULT NULL,
     ShortDescription NVARCHAR(60)   COLLATE DATABASE_DEFAULT NULL,
     LongDescription  NVARCHAR(1000) COLLATE DATABASE_DEFAULT NOT NULL,
@@ -253,15 +265,14 @@ CREATE TABLE #CodeStaging (
     SortOrder        INT            NULL
 );";
 
-        // The target is narrowed to this release, so NOT MATCHED BY SOURCE only
-        // touches codes an earlier import of the same release had. Those are
-        // deactivated rather than deleted - later work (TEL-20) will reference them.
-        private const string MergeIcd10Sql = @"
-DECLARE @actions TABLE (ActionName NVARCHAR(10), IsActive BIT);
+        // One batch of the file (RowNo @from..@to) into the release's rows.
+        // Codes the file no longer has are handled by DeactivateCodesNotInFile.
+        private const string MergeIcd10BatchSql = @"
+DECLARE @actions TABLE (ActionName NVARCHAR(10));
 
 WITH t AS (SELECT * FROM dbo.SYS_Icd10Code WHERE CodeSetVersionId = @v)
 MERGE t
-USING #CodeStaging AS s
+USING (SELECT * FROM #CodeStaging WHERE RowNo BETWEEN @from AND @to) AS s
    ON t.Code = s.Code
 WHEN MATCHED AND (
        t.DisplayCode <> s.DisplayCode
@@ -287,22 +298,19 @@ WHEN NOT MATCHED BY TARGET
                IsBillable, EffectiveDate, TerminationDate, IsActive, SortOrder, CreatedDate)
        VALUES (@v, s.Code, s.DisplayCode, s.ShortDescription, s.LongDescription,
                s.IsBillable, @eff, @term, 1, s.SortOrder, GETUTCDATE())
-WHEN NOT MATCHED BY SOURCE AND t.IsActive = 1
-  THEN UPDATE SET IsActive = 0, ModifiedDate = GETUTCDATE()
-OUTPUT $action, inserted.IsActive INTO @actions (ActionName, IsActive);
+OUTPUT $action INTO @actions (ActionName);
 
 SELECT
     ISNULL(SUM(CASE WHEN ActionName = 'INSERT' THEN 1 ELSE 0 END), 0),
-    ISNULL(SUM(CASE WHEN ActionName = 'UPDATE' AND IsActive = 1 THEN 1 ELSE 0 END), 0),
-    ISNULL(SUM(CASE WHEN ActionName = 'UPDATE' AND IsActive = 0 THEN 1 ELSE 0 END), 0)
+    ISNULL(SUM(CASE WHEN ActionName = 'UPDATE' THEN 1 ELSE 0 END), 0)
 FROM @actions;";
 
-        private const string MergeCptSql = @"
-DECLARE @actions TABLE (ActionName NVARCHAR(10), IsActive BIT);
+        private const string MergeCptBatchSql = @"
+DECLARE @actions TABLE (ActionName NVARCHAR(10));
 
 WITH t AS (SELECT * FROM dbo.SYS_CptCode WHERE CodeSetVersionId = @v)
 MERGE t
-USING #CodeStaging AS s
+USING (SELECT * FROM #CodeStaging WHERE RowNo BETWEEN @from AND @to) AS s
    ON t.Code = s.Code
 WHEN MATCHED AND (
        ISNULL(t.ShortDescription, N'') <> ISNULL(s.ShortDescription, N'')
@@ -322,14 +330,11 @@ WHEN NOT MATCHED BY TARGET
                EffectiveDate, TerminationDate, IsActive, CreatedDate)
        VALUES (@v, s.Code, s.ShortDescription, s.LongDescription,
                @eff, @term, 1, GETUTCDATE())
-WHEN NOT MATCHED BY SOURCE AND t.IsActive = 1
-  THEN UPDATE SET IsActive = 0, ModifiedDate = GETUTCDATE()
-OUTPUT $action, inserted.IsActive INTO @actions (ActionName, IsActive);
+OUTPUT $action INTO @actions (ActionName);
 
 SELECT
     ISNULL(SUM(CASE WHEN ActionName = 'INSERT' THEN 1 ELSE 0 END), 0),
-    ISNULL(SUM(CASE WHEN ActionName = 'UPDATE' AND IsActive = 1 THEN 1 ELSE 0 END), 0),
-    ISNULL(SUM(CASE WHEN ActionName = 'UPDATE' AND IsActive = 0 THEN 1 ELSE 0 END), 0)
+    ISNULL(SUM(CASE WHEN ActionName = 'UPDATE' THEN 1 ELSE 0 END), 0)
 FROM @actions;";
 
         // ------------------------------------------------------------ helpers
@@ -343,6 +348,7 @@ FROM @actions;";
         private static void BulkCopyToStaging(SqlConnection connection, SqlTransaction tx, IReadOnlyList<ParsedClinicalCode> codes)
         {
             var table = new DataTable();
+            table.Columns.Add("RowNo", typeof(int));
             table.Columns.Add("Code", typeof(string));
             table.Columns.Add("DisplayCode", typeof(string));
             table.Columns.Add("ShortDescription", typeof(string));
@@ -350,9 +356,11 @@ FROM @actions;";
             table.Columns.Add("IsBillable", typeof(bool));
             table.Columns.Add("SortOrder", typeof(int));
 
+            var rowNo = 0;
             foreach (var c in codes)
             {
                 table.Rows.Add(
+                    ++rowNo,
                     c.Code,
                     (object?)c.DisplayCode ?? DBNull.Value,
                     (object?)c.ShortDescription ?? DBNull.Value,
@@ -373,17 +381,65 @@ FROM @actions;";
             bulk.WriteToServer(table);
         }
 
-        private static (int Inserted, int Updated, int Deactivated) Merge(
-            SqlConnection connection, SqlTransaction tx, string sql, SYS_CodeSetVersion version)
+        private static (int Inserted, int Updated) MergeInBatches(
+            SqlConnection connection, SqlTransaction tx, string sql, SYS_CodeSetVersion version, int rowCount)
         {
-            using var cmd = new SqlCommand(sql, connection, tx) { CommandTimeout = CommandTimeoutSeconds };
-            cmd.Parameters.Add("@v", SqlDbType.BigInt).Value = version.CodeSetVersionId;
-            cmd.Parameters.Add("@eff", SqlDbType.Date).Value = version.EffectiveDate;
-            cmd.Parameters.Add("@term", SqlDbType.Date).Value = (object?)version.TerminationDate ?? DBNull.Value;
+            int inserted = 0, updated = 0;
 
-            using var reader = cmd.ExecuteReader();
-            reader.Read();
-            return (reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2));
+            for (var from = 1; from <= rowCount; from += WriteBatchSize)
+            {
+                using var cmd = new SqlCommand(sql, connection, tx) { CommandTimeout = CommandTimeoutSeconds };
+                cmd.Parameters.Add("@v", SqlDbType.BigInt).Value = version.CodeSetVersionId;
+                cmd.Parameters.Add("@eff", SqlDbType.Date).Value = version.EffectiveDate;
+                cmd.Parameters.Add("@term", SqlDbType.Date).Value = (object?)version.TerminationDate ?? DBNull.Value;
+                cmd.Parameters.Add("@from", SqlDbType.Int).Value = from;
+                cmd.Parameters.Add("@to", SqlDbType.Int).Value = from + WriteBatchSize - 1;
+
+                using var reader = cmd.ExecuteReader();
+                reader.Read();
+                inserted += reader.GetInt32(0);
+                updated += reader.GetInt32(1);
+            }
+
+            return (inserted, updated);
+        }
+
+        /// <summary>
+        /// Codes an earlier import of this release had but the file no longer has.
+        /// Deactivated rather than deleted - later work (TEL-20) will reference them.
+        /// </summary>
+        private static int DeactivateCodesNotInFile(
+            SqlConnection connection, SqlTransaction tx, string codeTable, SYS_CodeSetVersion version)
+        {
+            // codeTable is one of two constants, never input.
+            var sql = $@"
+UPDATE TOP (@batch) t
+   SET IsActive = 0, ModifiedDate = GETUTCDATE()
+  FROM dbo.{codeTable} t
+ WHERE t.CodeSetVersionId = @v
+   AND t.IsActive = 1
+   AND NOT EXISTS (SELECT 1 FROM #CodeStaging s WHERE s.Code = t.Code);";
+
+            return ExecuteUntilDone(connection, tx, sql, cmd =>
+                cmd.Parameters.Add("@v", SqlDbType.BigInt).Value = version.CodeSetVersionId);
+        }
+
+        /// <summary>Runs an UPDATE TOP (@batch) repeatedly until a batch comes back short.</summary>
+        private static int ExecuteUntilDone(
+            SqlConnection connection, SqlTransaction tx, string sql, Action<SqlCommand> addParameters)
+        {
+            var total = 0;
+            int affected;
+            do
+            {
+                using var cmd = new SqlCommand(sql, connection, tx) { CommandTimeout = CommandTimeoutSeconds };
+                cmd.Parameters.Add("@batch", SqlDbType.Int).Value = WriteBatchSize;
+                addParameters(cmd);
+                affected = cmd.ExecuteNonQuery();
+                total += affected;
+            } while (affected == WriteBatchSize);
+
+            return total;
         }
 
         /// <summary>
@@ -394,31 +450,45 @@ FROM @actions;";
         private static int CloseEarlierReleases(
             SqlConnection connection, SqlTransaction tx, string codeTable, SYS_CodeSetVersion version, long userId)
         {
-            // codeTable is one of two constants, never input.
-            var sql = $@"
-DECLARE @closed TABLE (Id BIGINT);
-
+            const string closeReleasesSql = @"
 UPDATE dbo.SYS_CodeSetVersion
    SET TerminationDate = DATEADD(day, -1, @eff), ModifiedBy = @u, ModifiedDate = GETUTCDATE()
-OUTPUT inserted.CodeSetVersionId INTO @closed (Id)
+OUTPUT inserted.CodeSetVersionId
  WHERE CodeSystem = @sys
    AND CodeSetVersionId <> @v
    AND EffectiveDate < @eff
-   AND (TerminationDate IS NULL OR TerminationDate >= @eff);
+   AND (TerminationDate IS NULL OR TerminationDate >= @eff);";
 
-UPDATE c
-   SET TerminationDate = DATEADD(day, -1, @eff), ModifiedDate = GETUTCDATE()
+            var closedIds = new List<long>();
+            using (var cmd = new SqlCommand(closeReleasesSql, connection, tx) { CommandTimeout = CommandTimeoutSeconds })
+            {
+                cmd.Parameters.Add("@v", SqlDbType.BigInt).Value = version.CodeSetVersionId;
+                cmd.Parameters.Add("@eff", SqlDbType.Date).Value = version.EffectiveDate;
+                cmd.Parameters.Add("@sys", SqlDbType.NVarChar, 16).Value = version.CodeSystem;
+                cmd.Parameters.Add("@u", SqlDbType.BigInt).Value = userId;
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read()) closedIds.Add(reader.GetInt64(0));
+            }
+
+            // codeTable is one of two constants, never input.
+            var closeCodesSql = $@"
+UPDATE TOP (@batch) c
+   SET TerminationDate = @close, ModifiedDate = GETUTCDATE()
   FROM dbo.{codeTable} c
-  JOIN @closed x ON x.Id = c.CodeSetVersionId;
+ WHERE c.CodeSetVersionId = @id
+   AND (c.TerminationDate IS NULL OR c.TerminationDate <> @close);";
 
-SELECT COUNT(*) FROM @closed;";
+            var closeDate = version.EffectiveDate.AddDays(-1);
+            foreach (var id in closedIds)
+            {
+                ExecuteUntilDone(connection, tx, closeCodesSql, cmd =>
+                {
+                    cmd.Parameters.Add("@id", SqlDbType.BigInt).Value = id;
+                    cmd.Parameters.Add("@close", SqlDbType.Date).Value = closeDate;
+                });
+            }
 
-            using var cmd = new SqlCommand(sql, connection, tx) { CommandTimeout = CommandTimeoutSeconds };
-            cmd.Parameters.Add("@v", SqlDbType.BigInt).Value = version.CodeSetVersionId;
-            cmd.Parameters.Add("@eff", SqlDbType.Date).Value = version.EffectiveDate;
-            cmd.Parameters.Add("@sys", SqlDbType.NVarChar, 16).Value = version.CodeSystem;
-            cmd.Parameters.Add("@u", SqlDbType.BigInt).Value = userId;
-            return (int)cmd.ExecuteScalar();
+            return closedIds.Count;
         }
 
         private static ImportCodeSetResultDTO Fail(string message) =>
