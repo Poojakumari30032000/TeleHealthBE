@@ -17,7 +17,7 @@ using Vitality.Models.Repos.Services.Audit;
 
 namespace DudeMeds.Models.Repos.Services
 {
-    public class QuestionnairesRepo : BaseRepo, IQuestionnairesRepo
+    public partial class QuestionnairesRepo : BaseRepo, IQuestionnairesRepo
     {
         private readonly IMapper _mapper;
         private readonly IAuditService _auditService;

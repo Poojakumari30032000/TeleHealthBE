@@ -21,5 +21,16 @@ namespace DudeMeds.Models.Repos.Interfaces
         GetQuestionnaireJsonByIdResponseDTO GetQuestionnaireJson(GetQuestionnaireJsonRequestDTO request);
         List<GetPatientQuestionnaireSummaryDTO> GetPatientQuestionnaires(GetPatientQuestionnairesRequestDTO request);
         List<GetPatientQuestionnaireResponseItemDTO>? GetPatientQuestionnaireResponses(GetPatientQuestionnaireResponsesRequestDTO request);
+
+        // TEL-57 - assigned questionnaires. Callers are built from claims.
+        List<AssignableQuestionnaireDTO> GetAssignableQuestionnaires(long patientId, PatientQuestionnaireCallerDTO caller);
+        PatientQuestionnaireResultDTO AssignPatientQuestionnaire(AssignPatientQuestionnaireRequestDTO request, PatientQuestionnaireCallerDTO caller);
+        PatientQuestionnaireResultDTO CancelPatientQuestionnaire(long patientQuestionnaireId, PatientQuestionnaireCallerDTO caller);
+        List<PatientQuestionnaireAssignmentDTO> GetPatientQuestionnaireAssignments(long patientId, PatientQuestionnaireCallerDTO caller);
+        List<PatientQuestionnaireAssignmentDTO> GetMyAssignedQuestionnaires(PatientQuestionnaireCallerDTO caller);
+        PatientQuestionnaireFormDTO? GetMyQuestionnaireForm(long patientQuestionnaireId, PatientQuestionnaireCallerDTO caller);
+        PatientQuestionnaireResultDTO SaveMyQuestionnaireDraft(SavePatientQuestionnaireDraftRequestDTO request, PatientQuestionnaireCallerDTO caller);
+        PatientQuestionnaireResultDTO SubmitMyQuestionnaire(SubmitPatientQuestionnaireRequestDTO request, PatientQuestionnaireCallerDTO caller);
+        PatientQuestionnaireSubmissionDTO? GetPatientQuestionnaireSubmission(long patientQuestionnaireId, PatientQuestionnaireCallerDTO caller);
     }
 }

@@ -57,6 +57,8 @@ namespace Vitality.Models.EntityClasses
         public virtual DbSet<PT_PatientDocument> PT_PatientDocuments { get; set; } = null!;
         public virtual DbSet<PT_PatientTreatmentSoapNote> PT_PatientTreatmentSoapNotes { get; set; } = null!;
         public virtual DbSet<PT_PatientTreatmentInTakeForm> PT_PatientTreatmentInTakeForms { get; set; } = null!;
+        public virtual DbSet<PT_PatientQuestionnaire> PT_PatientQuestionnaires { get; set; } = null!;
+        public virtual DbSet<PT_PatientQuestionnaireAnswer> PT_PatientQuestionnaireAnswers { get; set; } = null!;
         public virtual DbSet<PT_PrescriptionMedicine> PT_PrescriptionMedicines { get; set; } = null!;
         public virtual DbSet<Pt_PatientProduct> Pt_PatientProducts { get; set; } = null!;
         public virtual DbSet<SYS_AuditLog> SYS_AuditLogs { get; set; } = null!;
@@ -1082,6 +1084,50 @@ namespace Vitality.Models.EntityClasses
                 entity.Property(e => e.ConsentHtml).HasColumnType("nvarchar(max)");
 
                 entity.Property(e => e.Type).HasMaxLength(50);
+            });
+
+            modelBuilder.Entity<PT_PatientQuestionnaire>(entity =>
+            {
+                entity.HasKey(e => e.PatientQuestionnaireId);
+                entity.ToTable("PT_PatientQuestionnaire");
+                entity.HasIndex(e => new { e.PatientId, e.Status }, "IX_PT_PatientQuestionnaire_PatientId_Status");
+                entity.HasIndex(e => e.QuestionnaireId, "IX_PT_PatientQuestionnaire_QuestionnaireId");
+                entity.HasIndex(e => e.FacilityId, "IX_PT_PatientQuestionnaire_FacilityId");
+                entity.Property(e => e.Status).HasMaxLength(32).HasDefaultValueSql("('Assigned')");
+                entity.Property(e => e.AssignedDate).HasColumnType("datetime").HasDefaultValueSql("(getutcdate())");
+                entity.Property(e => e.DueDate).HasColumnType("datetime");
+                entity.Property(e => e.StartedDate).HasColumnType("datetime");
+                entity.Property(e => e.SubmittedDate).HasColumnType("datetime");
+                entity.Property(e => e.DraftSavedDate).HasColumnType("datetime");
+                entity.Property(e => e.Guid).HasMaxLength(50);
+                entity.Property(e => e.IsActive).HasDefaultValue(true);
+                entity.Property(e => e.CreatedDate).HasColumnType("datetime").HasDefaultValueSql("(getutcdate())");
+                entity.Property(e => e.ModifiedDate).HasColumnType("datetime");
+                entity.HasOne(d => d.Patient)
+                    .WithMany()
+                    .HasForeignKey(d => d.PatientId)
+                    .OnDelete(DeleteBehavior.ClientSetNull)
+                    .HasConstraintName("FK_PT_PatientQuestionnaire_PT_Patients");
+                entity.HasOne(d => d.Questionnaire)
+                    .WithMany()
+                    .HasForeignKey(d => d.QuestionnaireId)
+                    .OnDelete(DeleteBehavior.ClientSetNull)
+                    .HasConstraintName("FK_PT_PatientQuestionnaire_SYS_Questionnaires");
+            });
+
+            modelBuilder.Entity<PT_PatientQuestionnaireAnswer>(entity =>
+            {
+                entity.HasKey(e => e.PatientQuestionnaireAnswerId);
+                entity.ToTable("PT_PatientQuestionnaireAnswer");
+                entity.HasIndex(e => new { e.PatientQuestionnaireId, e.DisplayOrder }, "IX_PT_PatientQuestionnaireAnswer_PatientQuestionnaireId");
+                entity.Property(e => e.FieldKey).HasMaxLength(128);
+                entity.Property(e => e.Type).HasMaxLength(50);
+                entity.Property(e => e.CreatedDate).HasColumnType("datetime").HasDefaultValueSql("(getutcdate())");
+                entity.HasOne(d => d.PatientQuestionnaire)
+                    .WithMany(p => p.PT_PatientQuestionnaireAnswers)
+                    .HasForeignKey(d => d.PatientQuestionnaireId)
+                    .OnDelete(DeleteBehavior.ClientSetNull)
+                    .HasConstraintName("FK_PT_PatientQuestionnaireAnswer_PT_PatientQuestionnaire");
             });
 
             modelBuilder.Entity<PT_PrescriptionMedicine>(entity =>
