@@ -37,6 +37,12 @@ namespace DudeMeds.Models.DTOs.ClinicalCodes
         /// <summary>Earlier releases whose termination date this import set.</summary>
         public int ReleasesClosed { get; set; }
 
+        /// <summary>
+        /// Category / Service / Package mappings this import left pointing at a
+        /// code that is no longer in force, and so flagged for review (TEL-20).
+        /// </summary>
+        public int MappingsFlaggedForReview { get; set; }
+
         public int ErrorCount { get; set; }
         public List<string> Errors { get; set; } = new();
     }
