@@ -1,4 +1,5 @@
 using DudeMeds.Models.DTOs.ClinicalCodes;
+using DudeMeds.Models.DTOs.Common;
 using DudeMeds.Models.Repos.Interfaces;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -6,12 +7,14 @@ using Vitality.Filters;
 using Vitality.Helper;
 using Vitality.Models.EntityClasses;
 using Vitality.Models.Enums;
+using Vitality.Models.Helpers;
+using Vitality.Models.Security;
 
 namespace DudeMeds.Controllers
 {
     /// <summary>
     /// TEL-19 - ICD-10-CM and CPT reference data: loading a published release and
-    /// reading it back. Search belongs to TEL-21.
+    /// reading it back (TEL-19), and searching it (TEL-21).
     /// </summary>
     [Route("api/[controller]")]
     [ApiController]
@@ -21,15 +24,26 @@ namespace DudeMeds.Controllers
         private const long MaxCodeSetFileBytes = 64L * 1024 * 1024;
 
         private readonly IClinicalCodesRepo _clinicalCodesRepo;
+        private readonly ISoapNoteCodesRepo _soapNoteCodesRepo;
         private readonly IConfiguration _configuration;
 
-        public ClinicalCodesController(IClinicalCodesRepo clinicalCodesRepo, IConfiguration configuration)
+        public ClinicalCodesController(IClinicalCodesRepo clinicalCodesRepo, ISoapNoteCodesRepo soapNoteCodesRepo, IConfiguration configuration)
         {
             _clinicalCodesRepo = clinicalCodesRepo;
+            _soapNoteCodesRepo = soapNoteCodesRepo;
             _configuration = configuration;
         }
 
         long UserId() => long.TryParse(User?.FindFirst("UserId")?.Value, out var id) ? id : 0;
+        long? ClaimLong(string key) => long.TryParse(User?.FindFirst(key)?.Value, out var v) ? v : null;
+
+        /// <summary>The caller, built only from the signed token.</summary>
+        ClinicalCodeCallerDTO Caller() => new ClinicalCodeCallerDTO
+        {
+            UserId = UserId(),
+            RoleId = ClaimLong("RoleId"),
+            OrganizationId = ClaimLong("OrganizationId")
+        };
 
         static ApiResponse<T> Failed<T>(ApiResponse<T> response, string message)
         {
@@ -104,6 +118,89 @@ namespace DudeMeds.Controllers
                     return Failed(response, $"No ICD-10-CM code '{request?.Code}' was in force on {onDate:yyyy-MM-dd}.");
 
                 response.Data = result;
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
+
+        /// <summary>
+        /// TEL-21 - type-ahead search for coding an encounter. Accepts a code, part
+        /// of a code with or without the dot ('E11.6', 'e116'), or words from the
+        /// description ('type 2 diab'), and returns ranked, paged matches from the
+        /// release in force on OnDate (default today). CPT is supported but returns
+        /// nothing until a licensed CPT release is loaded (TEL-19).
+        /// </summary>
+        [HttpGet("searchCodes")]
+        [AuthorizeRoles(UserRole.SuperAdmin, UserRole.GlobalAdmin, UserRole.ClinicAdmin, UserRole.Provider)]
+        [RequiresPermission(Permissions.PatientTreatment.Edit, Permissions.Treatment.Update)]
+        public ApiResponse<SearchClinicalCodesResultDTO> SearchCodes([FromQuery] SearchClinicalCodesRequestDTO request)
+        {
+            var response = new ApiResponse<SearchClinicalCodesResultDTO>();
+            try
+            {
+                var system = request?.CodeSystem?.Trim();
+                if (!string.IsNullOrEmpty(system)
+                    && !string.Equals(system, ClinicalCodeSystem.Icd10Cm, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(system, ClinicalCodeSystem.Cpt, StringComparison.OrdinalIgnoreCase))
+                    return Failed(response, $"Code system must be '{ClinicalCodeSystem.Icd10Cm}' or '{ClinicalCodeSystem.Cpt}'.");
+
+                if (!ClinicalCodeSearch.Parse(request?.Query, ClinicalCodeSystem.Icd10Cm).IsSearchable)
+                    return Failed(response, $"Enter at least {ClinicalCodeSearch.MinQueryLength} characters to search.");
+
+                response.Data = _clinicalCodesRepo.SearchCodes(request!);
+                response.Success = true;
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
+
+        // ================================================================
+        // TEL-22 - codes on a treatment SOAP note, the "encounter" TEL-22
+        // codes against. There are no treatment SOAP note endpoints in this
+        // repository to mirror, so access follows the permissions the SOAP
+        // note screen and TEL-21 search already use, plus the TEL-57
+        // patient-reach check in the repository.
+        // ================================================================
+
+        /// <summary>The codes on one treatment SOAP note, in order, with the date they are coded against.</summary>
+        [HttpGet("getSoapNoteCodes")]
+        [AuthorizeRoles(UserRole.SuperAdmin, UserRole.GlobalAdmin, UserRole.ClinicAdmin, UserRole.Provider)]
+        [RequiresPermission(Permissions.PatientTreatment.View, Permissions.Treatment.View)]
+        public ApiResponse<SoapNoteCodesDTO> GetSoapNoteCodes([FromQuery] GetByIdRequestDTO request)
+        {
+            var response = new ApiResponse<SoapNoteCodesDTO>();
+            try
+            {
+                var result = _soapNoteCodesRepo.GetSoapNoteCodes(request?.Id ?? 0, Caller());
+                if (!result.Success) return Failed(response, result.Message);
+                response.Data = result.Data!;
+                response.Success = true;
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
+
+        /// <summary>
+        /// Replaces every code on a treatment SOAP note. Each code must be active and
+        /// in force on the note's date in the release it was picked from, and not an
+        /// ICD-10-CM header code. All-or-nothing; the rejected codes come back in Errors.
+        /// Provider only, as editing the note itself is on the SOAP note screen.
+        /// </summary>
+        [HttpPost("saveSoapNoteCodes")]
+        [AuthorizeRoles(UserRole.Provider)]
+        [RequiresPermission(Permissions.PatientTreatment.Edit, Permissions.Treatment.Update)]
+        public ApiResponse<SoapNoteCodesResultDTO> SaveSoapNoteCodes([FromBody] SaveSoapNoteCodesRequestDTO request)
+        {
+            var response = new ApiResponse<SoapNoteCodesResultDTO>();
+            try
+            {
+                if (request is null) return Failed(response, "A request body is required.");
+
+                var result = _soapNoteCodesRepo.SaveSoapNoteCodes(request, Caller());
+                response.Data = result;
+                if (!result.Success) return Failed(response, result.Message);
+                response.Success = true;
+                response.Message = result.Message;
             }
             catch (Exception ex) { return Failed(response, ex.Message); }
             return response;
