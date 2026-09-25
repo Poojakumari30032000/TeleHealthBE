@@ -84,6 +84,9 @@ namespace Vitality.Models.EntityClasses
         public virtual DbSet<SYS_ProviderGroup> SYS_ProviderGroups { get; set; } = null!;
         public virtual DbSet<SYS_Questionnaire> SYS_Questionnaires { get; set; } = null!;
         public virtual DbSet<SYS_QuestionnaireFacilityJson> SYS_QuestionnaireFacilityJsons { get; set; } = null!;
+        public virtual DbSet<SYS_CodeSetVersion> SYS_CodeSetVersions { get; set; } = null!;
+        public virtual DbSet<SYS_Icd10Code> SYS_Icd10Codes { get; set; } = null!;
+        public virtual DbSet<SYS_CptCode> SYS_CptCodes { get; set; } = null!;
         public virtual DbSet<SYS_QuestionnairesInProduct> SYS_QuestionnairesInProducts { get; set; } = null!;
         public virtual DbSet<SYS_State> SYS_States { get; set; } = null!;
         public virtual DbSet<SYS_Subscription> SYS_Subscriptions { get; set; } = null!;
@@ -1603,6 +1606,64 @@ namespace Vitality.Models.EntityClasses
                 entity.Property(e => e.Review).HasMaxLength(50);
 
                 entity.Property(e => e.Status).HasMaxLength(50);
+            });
+
+            // TEL-19 - clinical code sets. See Sql/Create_SYS_ClinicalCodeSets.sql.
+            modelBuilder.Entity<SYS_CodeSetVersion>(entity =>
+            {
+                entity.HasKey(e => e.CodeSetVersionId);
+                entity.ToTable("SYS_CodeSetVersion");
+                entity.HasIndex(e => new { e.CodeSystem, e.VersionLabel }, "UX_SYS_CodeSetVersion_System_Label").IsUnique();
+                entity.HasIndex(e => new { e.CodeSystem, e.EffectiveDate }, "IX_SYS_CodeSetVersion_System_Effective");
+                entity.Property(e => e.CodeSystem).HasMaxLength(16);
+                entity.Property(e => e.VersionLabel).HasMaxLength(32);
+                entity.Property(e => e.EffectiveDate).HasColumnType("date");
+                entity.Property(e => e.TerminationDate).HasColumnType("date");
+                entity.Property(e => e.SourceFileName).HasMaxLength(260);
+                entity.Property(e => e.ImportedDate).HasColumnType("datetime");
+                entity.Property(e => e.CreatedDate).HasColumnType("datetime").HasDefaultValueSql("(getutcdate())");
+                entity.Property(e => e.ModifiedDate).HasColumnType("datetime");
+            });
+
+            modelBuilder.Entity<SYS_Icd10Code>(entity =>
+            {
+                entity.HasKey(e => e.Icd10CodeId);
+                entity.ToTable("SYS_Icd10Code");
+                entity.HasIndex(e => new { e.CodeSetVersionId, e.Code }, "UX_SYS_Icd10Code_Version_Code").IsUnique();
+                entity.HasIndex(e => e.Code, "IX_SYS_Icd10Code_Code");
+                entity.Property(e => e.Code).HasMaxLength(8);
+                entity.Property(e => e.DisplayCode).HasMaxLength(9);
+                entity.Property(e => e.ShortDescription).HasMaxLength(60);
+                entity.Property(e => e.LongDescription).HasMaxLength(400);
+                entity.Property(e => e.EffectiveDate).HasColumnType("date");
+                entity.Property(e => e.TerminationDate).HasColumnType("date");
+                entity.Property(e => e.CreatedDate).HasColumnType("datetime").HasDefaultValueSql("(getutcdate())");
+                entity.Property(e => e.ModifiedDate).HasColumnType("datetime");
+                entity.HasOne(d => d.CodeSetVersion)
+                    .WithMany()
+                    .HasForeignKey(d => d.CodeSetVersionId)
+                    .OnDelete(DeleteBehavior.ClientSetNull)
+                    .HasConstraintName("FK_SYS_Icd10Code_SYS_CodeSetVersion");
+            });
+
+            modelBuilder.Entity<SYS_CptCode>(entity =>
+            {
+                entity.HasKey(e => e.CptCodeId);
+                entity.ToTable("SYS_CptCode");
+                entity.HasIndex(e => new { e.CodeSetVersionId, e.Code }, "UX_SYS_CptCode_Version_Code").IsUnique();
+                entity.HasIndex(e => e.Code, "IX_SYS_CptCode_Code");
+                entity.Property(e => e.Code).HasMaxLength(5);
+                entity.Property(e => e.ShortDescription).HasMaxLength(60);
+                entity.Property(e => e.LongDescription).HasMaxLength(1000);
+                entity.Property(e => e.EffectiveDate).HasColumnType("date");
+                entity.Property(e => e.TerminationDate).HasColumnType("date");
+                entity.Property(e => e.CreatedDate).HasColumnType("datetime").HasDefaultValueSql("(getutcdate())");
+                entity.Property(e => e.ModifiedDate).HasColumnType("datetime");
+                entity.HasOne(d => d.CodeSetVersion)
+                    .WithMany()
+                    .HasForeignKey(d => d.CodeSetVersionId)
+                    .OnDelete(DeleteBehavior.ClientSetNull)
+                    .HasConstraintName("FK_SYS_CptCode_SYS_CodeSetVersion");
             });
 
             modelBuilder.Entity<SYS_QuestionnaireFacilityJson>(entity =>
