@@ -352,6 +352,8 @@ builder.Services.AddSingleton<Vitality.Models.Repos.Services.Validators.Provider
 builder.Services.AddScoped<Vitality.Models.Repos.Services.Schedules.SlotMaterializer>();
 builder.Services.AddTransient<IPatientAppointmentsRepo, PatientAppointmentsRepo>();
 builder.Services.AddTransient<IQuestionnairesRepo, QuestionnairesRepo>();
+// Scoped: takes the request-scoped MainContext rather than building its own (TEL-19).
+builder.Services.AddScoped<IClinicalCodesRepo, ClinicalCodesRepo>();
 builder.Services.AddTransient<IProductsRepo, ProductsRepo>();
 builder.Services.AddTransient<IProductCategoriesRepo, ProductCategoriesRepo>();
 builder.Services.AddTransient<IProductConditionsRepo, ProductConditionsRepo>();
