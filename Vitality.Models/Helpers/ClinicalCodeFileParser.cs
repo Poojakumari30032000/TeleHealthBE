@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
+using Vitality.Models.EntityClasses;
 
 namespace Vitality.Models.Helpers
 {
@@ -38,13 +39,10 @@ namespace Vitality.Models.Helpers
     /// </summary>
     public static class ClinicalCodeFileParser
     {
-        // ICD-10-CM: a letter, then two to six letters or digits. The second
-        // character is usually a digit, but FY2026 introduced QA0 (QA00101 etc.),
-        // so it is not assumed. Covers e.g. A00, C4A, E1165, S72001A, U071, QA00101.
-        private static readonly Regex Icd10CmCode = new("^[A-Z][0-9A-Z][0-9A-Z]{1,5}$", RegexOptions.Compiled);
-
-        // CPT: five digits (Category I), or four digits and F / T (Category II / III).
-        private static readonly Regex CptCode = new("^[0-9]{4}[0-9FTU]$", RegexOptions.Compiled);
+        // The code shapes live in ClinicalCodeFormat so that the importer and the
+        // TEL-20 mapping API accept exactly the same set of codes.
+        private static readonly Regex Icd10CmCode = ClinicalCodeFormat.Icd10CmCode;
+        private static readonly Regex CptCode = ClinicalCodeFormat.CptCode;
 
         /// <summary>
         /// The CMS ICD-10-CM "order file" (icd10cm_order_YYYY.txt), fixed width:
@@ -195,7 +193,7 @@ namespace Vitality.Models.Helpers
         public static string ToIcd10DisplayCode(string code)
         {
             ArgumentNullException.ThrowIfNull(code);
-            return code.Length > 3 ? code.Substring(0, 3) + "." + code.Substring(3) : code;
+            return ClinicalCodeFormat.ToDisplayCode(ClinicalCodeSystem.Icd10Cm, code);
         }
 
         /// <summary>

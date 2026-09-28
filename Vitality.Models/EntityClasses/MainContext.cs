@@ -87,6 +87,7 @@ namespace Vitality.Models.EntityClasses
         public virtual DbSet<SYS_CodeSetVersion> SYS_CodeSetVersions { get; set; } = null!;
         public virtual DbSet<SYS_Icd10Code> SYS_Icd10Codes { get; set; } = null!;
         public virtual DbSet<SYS_CptCode> SYS_CptCodes { get; set; } = null!;
+        public virtual DbSet<SYS_ClinicalCodeMapping> SYS_ClinicalCodeMappings { get; set; } = null!;
         public virtual DbSet<SYS_QuestionnairesInProduct> SYS_QuestionnairesInProducts { get; set; } = null!;
         public virtual DbSet<SYS_State> SYS_States { get; set; } = null!;
         public virtual DbSet<SYS_Subscription> SYS_Subscriptions { get; set; } = null!;
@@ -1664,6 +1665,37 @@ namespace Vitality.Models.EntityClasses
                     .HasForeignKey(d => d.CodeSetVersionId)
                     .OnDelete(DeleteBehavior.ClientSetNull)
                     .HasConstraintName("FK_SYS_CptCode_SYS_CodeSetVersion");
+            });
+
+            // TEL-20 - Category / Service / Package to code mapping.
+            // See Sql/Create_SYS_ClinicalCodeMapping.sql.
+            modelBuilder.Entity<SYS_ClinicalCodeMapping>(entity =>
+            {
+                entity.HasKey(e => e.ClinicalCodeMappingId);
+                entity.ToTable("SYS_ClinicalCodeMapping");
+                entity.HasIndex(e => new { e.TargetType, e.TargetId, e.CodeSystem, e.Code },
+                    "UX_SYS_ClinicalCodeMapping_Target_Code").IsUnique();
+                entity.HasIndex(e => new { e.TargetType, e.TargetId }, "IX_SYS_ClinicalCodeMapping_Target");
+                entity.Property(e => e.TargetType).HasMaxLength(16);
+                entity.Property(e => e.CodeSystem).HasMaxLength(16);
+                entity.Property(e => e.Code).HasMaxLength(8);
+                entity.Property(e => e.ReviewReason).HasMaxLength(200);
+                entity.Property(e => e.CreatedDate).HasColumnType("datetime").HasDefaultValueSql("(getutcdate())");
+                entity.Property(e => e.ModifiedDate).HasColumnType("datetime");
+
+                // Restrict, not the EF default: deleting a reference code that a
+                // mapping uses has to fail rather than take the mapping with it.
+                entity.HasOne(d => d.Icd10Code)
+                    .WithMany()
+                    .HasForeignKey(d => d.Icd10CodeId)
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .HasConstraintName("FK_SYS_ClinicalCodeMapping_SYS_Icd10Code");
+
+                entity.HasOne(d => d.CptCode)
+                    .WithMany()
+                    .HasForeignKey(d => d.CptCodeId)
+                    .OnDelete(DeleteBehavior.Restrict)
+                    .HasConstraintName("FK_SYS_ClinicalCodeMapping_SYS_CptCode");
             });
 
             modelBuilder.Entity<SYS_QuestionnaireFacilityJson>(entity =>

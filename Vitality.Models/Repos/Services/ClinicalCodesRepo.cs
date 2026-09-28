@@ -33,11 +33,13 @@ namespace DudeMeds.Models.Repos.Services
 
         private readonly MainContext _db;
         private readonly IAuditService _auditService;
+        private readonly IClinicalCodeMappingsRepo _mappingsRepo;
 
-        public ClinicalCodesRepo(MainContext db, IAuditService auditService)
+        public ClinicalCodesRepo(MainContext db, IAuditService auditService, IClinicalCodeMappingsRepo mappingsRepo)
         {
             _db = db;
             _auditService = auditService;
+            _mappingsRepo = mappingsRepo;
         }
 
         public ImportCodeSetResultDTO ImportCodeSet(ImportCodeSetRequestDTO request, string? fileName, Stream content, long userId)
@@ -172,16 +174,39 @@ namespace DudeMeds.Models.Repos.Services
                            + $"{inserted} inserted, {updated} updated, {deactivated} deactivated, {closed} earlier release(s) closed",
                 module: "ClinicalCodes");
 
+            // An import is the only thing that terminates a code, so it is also the
+            // moment a Category / Service / Package mapping can silently go stale
+            // (TEL-20). Runs after the commit: a failure to refresh flags must not
+            // roll back a loaded code set, and the flags are derived state that
+            // refreshReviewFlags can rebuild.
+            var review = new RefreshClinicalCodeReviewFlagsResultDTO();
+            try
+            {
+                review = _mappingsRepo.RefreshReviewFlags(now.Date, userId);
+            }
+            catch (Exception ex)
+            {
+                _auditService.LogEntityChange(
+                    action: "Update",
+                    entityType: "SYS_ClinicalCodeMapping",
+                    entityId: null,
+                    userId: userId,
+                    description: $"Review flags could not be refreshed after importing {system} {label}: {ex.Message}",
+                    module: "ClinicalCodes");
+            }
+
             return new ImportCodeSetResultDTO
             {
                 Success = true,
-                Message = $"{system} {label} imported: {parsed.Codes.Count} codes.",
+                Message = $"{system} {label} imported: {parsed.Codes.Count} codes."
+                        + (review.Flagged > 0 ? $" {review.Flagged} mapping(s) flagged for review." : string.Empty),
                 CodeSetVersionId = version.CodeSetVersionId,
                 CodesInFile = parsed.Codes.Count,
                 Inserted = inserted,
                 Updated = updated,
                 Deactivated = deactivated,
-                ReleasesClosed = closed
+                ReleasesClosed = closed,
+                MappingsFlaggedForReview = review.Flagged
             };
         }
 
