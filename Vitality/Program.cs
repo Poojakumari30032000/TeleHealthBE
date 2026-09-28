@@ -352,13 +352,9 @@ builder.Services.AddSingleton<Vitality.Models.Repos.Services.Validators.Provider
 builder.Services.AddScoped<Vitality.Models.Repos.Services.Schedules.SlotMaterializer>();
 builder.Services.AddTransient<IPatientAppointmentsRepo, PatientAppointmentsRepo>();
 builder.Services.AddTransient<IQuestionnairesRepo, QuestionnairesRepo>();
-// Scoped: takes the request-scoped MainContext rather than building its own (TEL-19).
 builder.Services.AddScoped<IClinicalCodesRepo, ClinicalCodesRepo>();
-// Scoped for the same reason (TEL-20). ClinicalCodesRepo depends on this one so
-// that an import refreshes the review flags on mappings it just invalidated.
+builder.Services.AddScoped<ISoapNoteCodesRepo, SoapNoteCodesRepo>();
 builder.Services.AddScoped<IClinicalCodeMappingsRepo, ClinicalCodeMappingsRepo>();
-// AuditActionFilter takes IAuditService, so it is applied with [ServiceFilter]
-// and has to be resolvable. It is opt-in per controller, not global.
 builder.Services.AddScoped<Vitality.Filters.AuditActionFilter>();
 builder.Services.AddTransient<IProductsRepo, ProductsRepo>();
 builder.Services.AddTransient<IProductCategoriesRepo, ProductCategoriesRepo>();

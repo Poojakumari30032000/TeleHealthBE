@@ -1,4 +1,5 @@
 using DudeMeds.Models.DTOs.ClinicalCodes;
+using DudeMeds.Models.DTOs.Common;
 using DudeMeds.Models.Repos.Interfaces;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -23,15 +24,26 @@ namespace DudeMeds.Controllers
         private const long MaxCodeSetFileBytes = 64L * 1024 * 1024;
 
         private readonly IClinicalCodesRepo _clinicalCodesRepo;
+        private readonly ISoapNoteCodesRepo _soapNoteCodesRepo;
         private readonly IConfiguration _configuration;
 
-        public ClinicalCodesController(IClinicalCodesRepo clinicalCodesRepo, IConfiguration configuration)
+        public ClinicalCodesController(IClinicalCodesRepo clinicalCodesRepo, ISoapNoteCodesRepo soapNoteCodesRepo, IConfiguration configuration)
         {
             _clinicalCodesRepo = clinicalCodesRepo;
+            _soapNoteCodesRepo = soapNoteCodesRepo;
             _configuration = configuration;
         }
 
         long UserId() => long.TryParse(User?.FindFirst("UserId")?.Value, out var id) ? id : 0;
+        long? ClaimLong(string key) => long.TryParse(User?.FindFirst(key)?.Value, out var v) ? v : null;
+
+        /// <summary>The caller, built only from the signed token.</summary>
+        ClinicalCodeCallerDTO Caller() => new ClinicalCodeCallerDTO
+        {
+            UserId = UserId(),
+            RoleId = ClaimLong("RoleId"),
+            OrganizationId = ClaimLong("OrganizationId")
+        };
 
         static ApiResponse<T> Failed<T>(ApiResponse<T> response, string message)
         {
@@ -137,6 +149,58 @@ namespace DudeMeds.Controllers
 
                 response.Data = _clinicalCodesRepo.SearchCodes(request!);
                 response.Success = true;
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
+
+        // ================================================================
+        // TEL-22 - codes on a treatment SOAP note, the "encounter" TEL-22
+        // codes against. There are no treatment SOAP note endpoints in this
+        // repository to mirror, so access follows the permissions the SOAP
+        // note screen and TEL-21 search already use, plus the TEL-57
+        // patient-reach check in the repository.
+        // ================================================================
+
+        /// <summary>The codes on one treatment SOAP note, in order, with the date they are coded against.</summary>
+        [HttpGet("getSoapNoteCodes")]
+        [AuthorizeRoles(UserRole.SuperAdmin, UserRole.GlobalAdmin, UserRole.ClinicAdmin, UserRole.Provider)]
+        [RequiresPermission(Permissions.PatientTreatment.View, Permissions.Treatment.View)]
+        public ApiResponse<SoapNoteCodesDTO> GetSoapNoteCodes([FromQuery] GetByIdRequestDTO request)
+        {
+            var response = new ApiResponse<SoapNoteCodesDTO>();
+            try
+            {
+                var result = _soapNoteCodesRepo.GetSoapNoteCodes(request?.Id ?? 0, Caller());
+                if (!result.Success) return Failed(response, result.Message);
+                response.Data = result.Data!;
+                response.Success = true;
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
+
+        /// <summary>
+        /// Replaces every code on a treatment SOAP note. Each code must be active and
+        /// in force on the note's date in the release it was picked from, and not an
+        /// ICD-10-CM header code. All-or-nothing; the rejected codes come back in Errors.
+        /// Provider only, as editing the note itself is on the SOAP note screen.
+        /// </summary>
+        [HttpPost("saveSoapNoteCodes")]
+        [AuthorizeRoles(UserRole.Provider)]
+        [RequiresPermission(Permissions.PatientTreatment.Edit, Permissions.Treatment.Update)]
+        public ApiResponse<SoapNoteCodesResultDTO> SaveSoapNoteCodes([FromBody] SaveSoapNoteCodesRequestDTO request)
+        {
+            var response = new ApiResponse<SoapNoteCodesResultDTO>();
+            try
+            {
+                if (request is null) return Failed(response, "A request body is required.");
+
+                var result = _soapNoteCodesRepo.SaveSoapNoteCodes(request, Caller());
+                response.Data = result;
+                if (!result.Success) return Failed(response, result.Message);
+                response.Success = true;
+                response.Message = result.Message;
             }
             catch (Exception ex) { return Failed(response, ex.Message); }
             return response;
