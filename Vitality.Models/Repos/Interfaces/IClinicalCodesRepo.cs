@@ -5,7 +5,7 @@ using System.IO;
 
 namespace DudeMeds.Models.Repos.Interfaces
 {
-    /// <summary>TEL-19 - ICD-10-CM and CPT reference data.</summary>
+    /// <summary>TEL-19 / TEL-21 - ICD-10-CM and CPT reference data and search.</summary>
     public interface IClinicalCodesRepo
     {
         /// <summary>
@@ -19,5 +19,11 @@ namespace DudeMeds.Models.Repos.Interfaces
 
         /// <summary>The ICD-10-CM code as it stood on the given date, or null if it was not in force then.</summary>
         Icd10CodeDTO? GetIcd10Code(string code, DateTime onDate);
+
+        /// <summary>
+        /// TEL-21 - ranked, paged search by code, part of a code or description,
+        /// over the release in force on the requested date.
+        /// </summary>
+        SearchClinicalCodesResultDTO SearchCodes(SearchClinicalCodesRequestDTO request);
     }
 }

@@ -6,12 +6,14 @@ using Vitality.Filters;
 using Vitality.Helper;
 using Vitality.Models.EntityClasses;
 using Vitality.Models.Enums;
+using Vitality.Models.Helpers;
+using Vitality.Models.Security;
 
 namespace DudeMeds.Controllers
 {
     /// <summary>
     /// TEL-19 - ICD-10-CM and CPT reference data: loading a published release and
-    /// reading it back. Search belongs to TEL-21.
+    /// reading it back (TEL-19), and searching it (TEL-21).
     /// </summary>
     [Route("api/[controller]")]
     [ApiController]
@@ -104,6 +106,37 @@ namespace DudeMeds.Controllers
                     return Failed(response, $"No ICD-10-CM code '{request?.Code}' was in force on {onDate:yyyy-MM-dd}.");
 
                 response.Data = result;
+            }
+            catch (Exception ex) { return Failed(response, ex.Message); }
+            return response;
+        }
+
+        /// <summary>
+        /// TEL-21 - type-ahead search for coding an encounter. Accepts a code, part
+        /// of a code with or without the dot ('E11.6', 'e116'), or words from the
+        /// description ('type 2 diab'), and returns ranked, paged matches from the
+        /// release in force on OnDate (default today). CPT is supported but returns
+        /// nothing until a licensed CPT release is loaded (TEL-19).
+        /// </summary>
+        [HttpGet("searchCodes")]
+        [AuthorizeRoles(UserRole.SuperAdmin, UserRole.GlobalAdmin, UserRole.ClinicAdmin, UserRole.Provider)]
+        [RequiresPermission(Permissions.PatientTreatment.Edit, Permissions.Treatment.Update)]
+        public ApiResponse<SearchClinicalCodesResultDTO> SearchCodes([FromQuery] SearchClinicalCodesRequestDTO request)
+        {
+            var response = new ApiResponse<SearchClinicalCodesResultDTO>();
+            try
+            {
+                var system = request?.CodeSystem?.Trim();
+                if (!string.IsNullOrEmpty(system)
+                    && !string.Equals(system, ClinicalCodeSystem.Icd10Cm, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(system, ClinicalCodeSystem.Cpt, StringComparison.OrdinalIgnoreCase))
+                    return Failed(response, $"Code system must be '{ClinicalCodeSystem.Icd10Cm}' or '{ClinicalCodeSystem.Cpt}'.");
+
+                if (!ClinicalCodeSearch.Parse(request?.Query, ClinicalCodeSystem.Icd10Cm).IsSearchable)
+                    return Failed(response, $"Enter at least {ClinicalCodeSearch.MinQueryLength} characters to search.");
+
+                response.Data = _clinicalCodesRepo.SearchCodes(request!);
+                response.Success = true;
             }
             catch (Exception ex) { return Failed(response, ex.Message); }
             return response;
